@@ -1,9 +1,10 @@
 from __future__ import annotations
 
-from code_rag.adapters.embeddings import HashEmbeddingProvider
-from code_rag.application.retrieval import QueryClassifier, RetrievalService
-from code_rag.models import QueryType, SearchHit, SearchRequest
-from code_rag.settings import Settings
+from code_rag.adapters.embeddings.hash_embedding_provider import HashEmbeddingProvider
+from code_rag.apps.retrieval.query_classifier import QueryClassifier
+from code_rag.apps.retrieval.retrieval_service import RetrievalService
+from code_rag.config.settings import Settings
+from code_rag.domain import QueryType, SearchHit, SearchRequest
 
 
 class FakeIndex:
@@ -35,7 +36,9 @@ class FakeIndex:
 def test_query_classifier_detects_definition_lookup() -> None:
     classifier = QueryClassifier()
 
-    assert classifier.classify("Where is PaymentService implemented?") == QueryType.DEFINITION_LOOKUP
+    assert (
+        classifier.classify("Where is PaymentService implemented?") == QueryType.DEFINITION_LOOKUP
+    )
     assert classifier.identifiers("Where is PaymentService implemented?") == ["PaymentService"]
 
 

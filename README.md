@@ -14,8 +14,11 @@ reranking.
 - GitLab project discovery and compare API client.
 - Local clone/fetch cache using `git`.
 - File classification, ignore rules, binary/generated/vendor detection.
-- Syntax-aware chunking for Python plus pragmatic regex chunking for common
-  JVM/JS/TS/C-like languages, with text fallback for docs/config.
+- Syntax-aware chunking: Python via the stdlib AST, and tree-sitter AST
+  chunking for JS/TS, Java, Go, Rust, C/C++, C#, Ruby and PHP (one definition
+  per chunk, with parent nesting, calls, imports and references). Regex chunking
+  is the fallback when a grammar is unavailable, and text chunking covers
+  docs/config.
 - Elasticsearch mappings for:
   - `code_chunks_v1`
   - `code_symbols_v1`
@@ -37,14 +40,23 @@ reranking.
 
 ## Quick start
 
-```powershell
+```bash
 python -m venv .venv
-.\.venv\Scripts\Activate.ps1
+source .venv/bin/activate
 pip install -e ".[dev]"
 docker compose up -d elasticsearch
-copy .env.example .env
+cp .env.example .env
 code-rag init-indices
-uvicorn code_rag.api:app --reload
+uvicorn code_rag.interfaces.rest.main:app --reload
+```
+
+On Windows PowerShell, use `.\.venv\Scripts\Activate.ps1` and `copy .env.example .env`.
+
+To build and run the API in Docker:
+
+```bash
+docker build -t code-rag .
+docker run --rm -p 8000:8000 --env-file .env code-rag
 ```
 
 Index a selected project. The API queues indexing jobs; the CLI still runs
@@ -83,15 +95,42 @@ project IDs from its permission cache and intersects them with optional request
 project filters. Set `CODE_RAG_ALLOW_REQUEST_SUPPLIED_PERMISSIONS=true` only for
 local development.
 
-If `CODE_RAG_EMBEDDING_SERVICE_URL` is set, the embedding adapter posts:
+## Authentication
+
+`CODE_RAG_API_KEYS` is a JSON object mapping API key to a trusted `user_id`,
+e.g. `{"svc-key-123":"alice"}`. When it is set, every protected endpoint
+(`/search`, `/answer`, `/index/*`, `/indices/init`, `/permissions`) requires a
+valid `X-API-Key` header, and the identity bound to that key overrides the
+`user_id` in the request body — a request cannot act as a different user. When
+`CODE_RAG_API_KEYS` is empty (the default) the service runs in development mode:
+no key is required and the request-supplied `user_id` is trusted. `/health` and
+the GitLab webhook (token-authenticated separately) are always open.
+
+Permission grants are stored in Elasticsearch (`code_permissions_v1`) and index
+job status in `code_job_status_v1`, so authorization and job polling stay
+consistent across multiple API workers and survive restarts.
+
+## Answer generation
+
+`CODE_RAG_ANSWER_PROVIDER` selects the backend: `extractive` (default, builds a
+grounded source list locally), `anthropic` (calls the Claude Messages API with
+`CODE_RAG_ANTHROPIC_API_KEY`/`CODE_RAG_ANTHROPIC_MODEL`, requires the
+`code-rag[anthropic]` extra), or set `CODE_RAG_LLM_ANSWER_SERVICE_URL` to post to
+your own service. All providers apply the same citation and refusal gates.
+
+If `CODE_RAG_EMBEDDING_SERVICE_URL` is set, the embedding adapter posts one
+batched request per file instead of one request per chunk:
 
 ```json
-{"text": "...", "input_type": "document"}
+{"texts": ["...", "..."], "input_type": "document"}
 ```
 
-It expects either `late_interaction`, `late_interaction_embeddings`, or
-`embeddings` in the response. If no dense vector is returned, the adapter
-mean-pools the late-interaction vectors for Elasticsearch kNN.
+It accepts either a top-level list or a `results`/`data` list; each item may
+carry `late_interaction`, `late_interaction_embeddings`, or `embeddings`, plus
+an optional `dense`/`embedding`. If no dense vector is returned, the adapter
+mean-pools the late-interaction vectors for Elasticsearch kNN. Unchanged chunks
+reuse their previously stored embeddings (keyed by an input-content hash) so
+re-indexing avoids redundant embedding calls.
 
 Repo metadata can be provided with `CODE_RAG_REPO_METADATA_PATH` pointing to a
 JSON or TOML file. JSON shape:
@@ -122,8 +161,8 @@ high-confidence findings entirely.
 
 Start the API:
 
-```powershell
-uvicorn code_rag.api:app --host 0.0.0.0 --port 8000
+```bash
+uvicorn code_rag.interfaces.rest.main:app --host 0.0.0.0 --port 8000
 ```
 
 Search:
@@ -184,6 +223,38 @@ X-Gitlab-Token: <CODE_RAG_GITLAB_WEBHOOK_SECRET>
 ```
 
 The webhook indexes only pushes to the configured branch.
+
+## Project structure
+
+The package follows a hexagonal (ports-and-adapters) layout, one class per file:
+
+```
+src/code_rag/
+  config/        Settings
+  domain/        Models, enums, value objects, ids (framework-free)
+  ports/         Protocols: SearchPort, JobStorePort, RepoStorePort,
+                 EmbeddingProvider, AnswerProvider, PermissionStorePort, ...
+  apps/          Application services (use cases): indexing, retrieval,
+                 chunking, classification, secrets, metadata, jobs, metrics,
+                 permissions, auth
+  adapters/      Concrete implementations: elasticsearch, embeddings, answer,
+                 git, gitlab, http, permissions
+  interfaces/
+    rest/        FastAPI app
+      main.py        app + middleware
+      dependencies.py
+      security.py    API-key auth dependency
+      routers/       one router per resource + request schemas
+    cli/         Typer CLI
+```
+
+The overloaded search/index port was split into focused `SearchPort`,
+`JobStorePort`, and `RepoStorePort` protocols so each service depends only on
+what it uses.
+
+Tree-sitter grammars are an optional install (`pip install -e ".[tree-sitter]"`);
+each grammar wheel bundles its compiled parser so there is no runtime download.
+Set `CODE_RAG_USE_TREE_SITTER=false` to force the regex chunker.
 
 ## Production notes
 

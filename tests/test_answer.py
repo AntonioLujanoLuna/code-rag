@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-from code_rag.adapters.answer import ExtractiveAnswerProvider
-from code_rag.models import QueryType, SearchHit, SearchResponse
-from code_rag.settings import Settings
+from code_rag.adapters.answer.extractive_answer_provider import ExtractiveAnswerProvider
+from code_rag.config.settings import Settings
+from code_rag.domain import QueryType, SearchHit, SearchResponse
 
 
 def test_answer_provider_refuses_without_evidence() -> None:
@@ -48,4 +48,3 @@ def hit() -> SearchHit:
         gitlab_blob_url="https://gitlab.example.com/group/payments/-/blob/abc/service.py#L1-L10",
         text="Repository: group/payments\nCode:\nclass PaymentService: ...",
     )
-

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Protocol
 
-from code_rag.models import PermissionRecord
+from code_rag.domain.models import PermissionRecord
 
 
 class PermissionStorePort(Protocol):
@@ -11,4 +11,3 @@ class PermissionStorePort(Protocol):
 
     def get(self, tenant_id: str, user_id: str) -> PermissionRecord | None:
         """Return a user permission record when present."""
-

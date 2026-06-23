@@ -12,4 +12,3 @@ def content_hash(content: bytes | str) -> str:
     if isinstance(content, str):
         content = content.encode("utf-8", errors="ignore")
     return hashlib.sha256(content).hexdigest()
-

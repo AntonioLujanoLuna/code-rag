@@ -2,12 +2,12 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from code_rag.application.chunking import ChunkBuilder
-from code_rag.application.file_classifier import FileClassifier
-from code_rag.application.repo_metadata import RepoMetadataProvider
-from code_rag.application.secrets import SecretScanner
-from code_rag.models import ChunkKind, GitLabProject, SymbolRole
-from code_rag.settings import Settings
+from code_rag.apps.chunking.chunk_builder import ChunkBuilder
+from code_rag.apps.classification.file_classifier import FileClassifier
+from code_rag.apps.metadata.repo_metadata_provider import RepoMetadataProvider
+from code_rag.apps.secrets.secret_scanner import SecretScanner
+from code_rag.config.settings import Settings
+from code_rag.domain import ChunkKind, GitLabProject, SymbolRole
 
 
 def test_python_chunking_extracts_definitions(tmp_path: Path) -> None:

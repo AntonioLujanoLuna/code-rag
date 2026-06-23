@@ -6,11 +6,17 @@ import pytest
 from fastapi import HTTPException
 from pydantic import ValidationError
 
-from code_rag.adapters.elasticsearch_index import ElasticsearchCodeIndex
-from code_rag.adapters.git_repo_cache import GitRepoCache
-from code_rag.api import get_job
-from code_rag.models import AnswerRequest, GitLabProject, IndexJobResult, SearchRequest, utcnow
-from code_rag.settings import Settings
+from code_rag.adapters.elasticsearch.index import ElasticsearchCodeIndex
+from code_rag.adapters.git.git_repo_cache import GitRepoCache
+from code_rag.config.settings import Settings
+from code_rag.domain import (
+    AnswerRequest,
+    GitLabProject,
+    IndexJobResult,
+    SearchRequest,
+    utcnow,
+)
+from code_rag.interfaces.rest.routers.jobs import get_job
 
 
 def test_delete_file_scopes_edge_deletion_to_project() -> None:
@@ -48,7 +54,7 @@ def test_edge_search_applies_chunk_filters_for_repo_path() -> None:
 
 def test_get_job_falls_back_to_persisted_result() -> None:
     result = _job_result("job-1")
-    status = get_job("job-1", queue=EmptyQueue(), service=FakeService(result))
+    status = get_job("job-1", queue=EmptyQueue(), job_store=FakeJobStore(result))
 
     assert status.job_id == "job-1"
     assert status.status == "succeeded"
@@ -57,7 +63,7 @@ def test_get_job_falls_back_to_persisted_result() -> None:
 
 def test_get_job_404s_when_queue_and_index_miss() -> None:
     with pytest.raises(HTTPException) as exc_info:
-        get_job("missing", queue=EmptyQueue(), service=FakeService(None))
+        get_job("missing", queue=EmptyQueue(), job_store=FakeJobStore(None))
 
     assert exc_info.value.status_code == 404
 
@@ -143,14 +149,9 @@ class EmptyQueue:
         return None
 
 
-class FakeIndex:
+class FakeJobStore:
     def __init__(self, result: IndexJobResult | None) -> None:
         self.result = result
 
     def get_job(self, job_id: str) -> IndexJobResult | None:
         return self.result if self.result and self.result.job_id == job_id else None
-
-
-class FakeService:
-    def __init__(self, result: IndexJobResult | None) -> None:
-        self.index = FakeIndex(result)
