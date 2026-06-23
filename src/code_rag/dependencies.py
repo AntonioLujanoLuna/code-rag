@@ -12,6 +12,7 @@ from code_rag.application.chunking import ChunkBuilder
 from code_rag.application.file_classifier import FileClassifier
 from code_rag.application.indexing import IndexingService
 from code_rag.application.jobs import IndexJobQueue
+from code_rag.application.metrics import MetricsRegistry
 from code_rag.application.permissions import PermissionService
 from code_rag.application.repo_metadata import RepoMetadataProvider
 from code_rag.application.retrieval import RetrievalService
@@ -84,6 +85,11 @@ def get_job_queue() -> IndexJobQueue:
 @lru_cache
 def get_answer_provider() -> ExtractiveAnswerProvider:
     return ExtractiveAnswerProvider(get_settings())
+
+
+@lru_cache
+def get_metrics() -> MetricsRegistry:
+    return MetricsRegistry()
 
 
 def get_indexing_service() -> IndexingService:

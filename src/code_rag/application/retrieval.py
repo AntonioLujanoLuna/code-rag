@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import logging
 import re
+import time
 
 from code_rag.models import QueryType, SearchHit, SearchRequest, SearchResponse
 from code_rag.ports.embedding import EmbeddingProvider
@@ -29,6 +31,7 @@ IDENTIFIER_STOP_WORDS = {
     "Who",
     "Why",
 }
+logger = logging.getLogger(__name__)
 
 
 class QueryClassifier:
@@ -83,6 +86,7 @@ class RetrievalService:
         self.classifier = classifier or QueryClassifier()
 
     def search(self, request: SearchRequest) -> SearchResponse:
+        started = time.perf_counter()
         query_type = self.classifier.classify(request.query)
         identifiers = self.classifier.identifiers(request.query)
         tenant_id = request.tenant_id or self.settings.tenant_id
@@ -110,6 +114,16 @@ class RetrievalService:
             identifiers,
             query_embedding.late_interaction,
         )[: request.top_k]
+        duration = time.perf_counter() - started
+        logger.info(
+            "Search completed",
+            extra={
+                "query_type": query_type.value,
+                "hit_count": len(hits),
+                "duration_seconds": duration,
+                "tenant_id": tenant_id,
+            },
+        )
         return SearchResponse(
             query=request.query,
             query_type=query_type,

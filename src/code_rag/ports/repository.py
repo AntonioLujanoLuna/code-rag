@@ -16,3 +16,5 @@ class RepoCachePort(Protocol):
     def changed_files(self, worktree: Path, old_sha: str, new_sha: str) -> list[str]:
         """Return changed file paths from git diff."""
 
+    def cleanup(self, worktree: Path) -> None:
+        """Remove a temporary worktree returned by checkout."""

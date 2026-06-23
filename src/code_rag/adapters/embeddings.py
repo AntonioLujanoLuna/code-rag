@@ -6,6 +6,7 @@ import re
 
 import httpx
 
+from code_rag.adapters.http import request_with_retries
 from code_rag.ports.embedding import EmbeddingResult
 from code_rag.settings import Settings
 
@@ -77,7 +78,14 @@ class HttpLateInteractionEmbeddingProvider:
     def _embed_one(self, text: str, input_type: str) -> EmbeddingResult:
         payload = {"text": text, "input_type": input_type}
         with httpx.Client(timeout=self.settings.embedding_service_timeout_seconds) as client:
-            response = client.post(self.settings.embedding_service_url, json=payload)
+            response = request_with_retries(
+                client,
+                "POST",
+                self.settings.embedding_service_url,
+                json=payload,
+                retries=self.settings.http_retries,
+                backoff_seconds=self.settings.http_retry_backoff_seconds,
+            )
             response.raise_for_status()
             data = response.json()
         late = data.get("late_interaction") or data.get("late_interaction_embeddings") or data.get("embeddings")

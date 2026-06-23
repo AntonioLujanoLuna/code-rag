@@ -26,6 +26,8 @@ class Settings(BaseSettings):
     llm_answer_service_timeout_seconds: float = 60.0
     min_answer_sources: int = 1
     min_answer_score: float = 0.0
+    http_retries: int = 3
+    http_retry_backoff_seconds: float = 0.25
 
     clone_cache_dir: Path = Path(".cache/repos")
     worktree_dir: Path = Path(".cache/worktrees")

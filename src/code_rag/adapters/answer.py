@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import httpx
 
+from code_rag.adapters.http import request_with_retries
 from code_rag.models import SearchResponse
 from code_rag.settings import Settings
 
@@ -73,7 +74,14 @@ class ExtractiveAnswerProvider:
             },
         }
         with httpx.Client(timeout=self.settings.llm_answer_service_timeout_seconds) as client:
-            response = client.post(self.settings.llm_answer_service_url, json=payload)
+            response = request_with_retries(
+                client,
+                "POST",
+                self.settings.llm_answer_service_url,
+                json=payload,
+                retries=self.settings.http_retries,
+                backoff_seconds=self.settings.http_retry_backoff_seconds,
+            )
             response.raise_for_status()
             data = response.json()
         return data.get("answer") or data.get("text") or ""

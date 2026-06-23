@@ -1,10 +1,14 @@
 from __future__ import annotations
 
+import logging
 from collections.abc import Callable
 from concurrent.futures import Future, ThreadPoolExecutor
 from threading import RLock
 
 from code_rag.models import IndexJobResult, JobStatus, utcnow
+
+
+logger = logging.getLogger(__name__)
 
 
 class IndexJobQueue:
@@ -43,6 +47,7 @@ class IndexJobQueue:
         with self._lock:
             current = self._jobs[job_id]
             self._jobs[job_id] = current.model_copy(update={"status": "running", "started_at": utcnow()})
+        logger.info("Index job started", extra={"job_id": job_id})
         try:
             result = work()
             status = "succeeded" if result.status == "succeeded" else "failed"
@@ -55,11 +60,15 @@ class IndexJobQueue:
                         "error_message": result.error_message,
                     }
                 )
+            logger.info(
+                "Index job finished",
+                extra={"job_id": job_id, "status": status, "chunks_added": result.chunks_added},
+            )
             return result
         except Exception as exc:
             with self._lock:
                 self._jobs[job_id] = self._jobs[job_id].model_copy(
                     update={"status": "failed", "finished_at": utcnow(), "error_message": str(exc)}
                 )
+            logger.exception("Index job crashed", extra={"job_id": job_id})
             raise
-

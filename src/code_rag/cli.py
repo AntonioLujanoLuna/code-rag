@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 import typer
 
@@ -70,7 +71,7 @@ def search(
     allowed_project_id: list[str] | None = typer.Option(None, help="Optional project filter."),
     branch: str | None = typer.Option(None),
     repo_path_with_namespace: str | None = typer.Option(None),
-    top_k: int = typer.Option(8),
+    top_k: int = typer.Option(8, min=1, max=50),
 ) -> None:
     result = get_retrieval_service().search(
         SearchRequest(
@@ -91,7 +92,7 @@ def answer(
     user_id: str | None = typer.Option(None, help="Synced permission user id."),
     allowed_project_id: list[str] | None = typer.Option(None, help="Optional project filter."),
     branch: str | None = typer.Option(None),
-    top_k: int = typer.Option(8),
+    top_k: int = typer.Option(8, min=1, max=50),
 ) -> None:
     search_result = get_retrieval_service().search(
         SearchRequest(
@@ -124,7 +125,7 @@ def sync_permissions(
 
 @app.command("webhook-payload-changes")
 def webhook_payload_changes(path: str) -> None:
-    payload = json.loads(open(path, encoding="utf-8").read())
+    payload = json.loads(Path(path).read_text(encoding="utf-8"))
     changes = [
         ChangedFile(
             old_path=item.get("old_path") or item.get("new_path"),

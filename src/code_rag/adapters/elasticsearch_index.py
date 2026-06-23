@@ -2,7 +2,11 @@ from __future__ import annotations
 
 from typing import Any
 
-from elasticsearch import Elasticsearch, helpers
+try:
+    from elasticsearch import Elasticsearch, helpers
+except ImportError:
+    Elasticsearch = None
+    helpers = None
 
 from code_rag.models import CodeChunk, CodeEdge, CodeSymbol, FileMetadata, IndexJobResult, SearchHit
 from code_rag.settings import Settings
@@ -10,6 +14,8 @@ from code_rag.settings import Settings
 
 class ElasticsearchCodeIndex:
     def __init__(self, settings: Settings) -> None:
+        if Elasticsearch is None:
+            raise RuntimeError("The elasticsearch package is required to use ElasticsearchCodeIndex")
         self.settings = settings
         kwargs: dict[str, Any] = {}
         if settings.elasticsearch_api_key:
@@ -108,6 +114,8 @@ class ElasticsearchCodeIndex:
             for edge in edges
         )
         if actions:
+            if helpers is None:
+                raise RuntimeError("The elasticsearch package is required for bulk indexing")
             helpers.bulk(self.client, actions, refresh=False)
         return len(chunks), deleted
 
@@ -145,6 +153,7 @@ class ElasticsearchCodeIndex:
                 "filter": [
                     {"term": {"tenant_id": tenant_id}},
                     {"term": {"branch": branch}},
+                    {"term": {"source_repo_project_id": str(project_id)}},
                 ],
                 "should": [
                     {"term": {"source_file_path": file_path}},
@@ -262,7 +271,7 @@ class ElasticsearchCodeIndex:
             return []
         chunk_response = self.client.search(
             index=self.chunks_index,
-            query={"ids": {"values": chunk_ids}},
+            query=self._chunk_ids_query(chunk_ids, filters),
             size=len(chunk_ids),
         )
         return [self._hit(item) for item in chunk_response["hits"]["hits"]]
@@ -299,7 +308,7 @@ class ElasticsearchCodeIndex:
             return []
         chunk_response = self.client.search(
             index=self.chunks_index,
-            query={"ids": {"values": chunk_ids}},
+            query=self._chunk_ids_query(chunk_ids, filters),
             size=len(chunk_ids),
         )
         hits = [self._hit(item) for item in chunk_response["hits"]["hits"]]
@@ -496,9 +505,6 @@ class ElasticsearchCodeIndex:
             {"term": {"branch": filters["branch"]}},
             {"terms": {"source_repo_project_id": [str(item) for item in filters["allowed_project_ids"]]}},
         ]
-        if filters.get("repo_path_with_namespace"):
-            # Edge docs do not carry repo path yet; chunk lookup enforces the same allowed projects.
-            pass
         return clauses
 
     def _symbol_filters(self, filters: dict) -> list[dict]:
@@ -510,6 +516,16 @@ class ElasticsearchCodeIndex:
         if filters.get("repo_path_with_namespace"):
             clauses.append({"term": {"repo_path_with_namespace": filters["repo_path_with_namespace"]}})
         return clauses
+
+    def _chunk_ids_query(self, chunk_ids: list[str], filters: dict) -> dict:
+        return {
+            "bool": {
+                "filter": [
+                    {"ids": {"values": chunk_ids}},
+                    *self._filters(filters),
+                ]
+            }
+        }
 
     def _hit(self, item: dict) -> SearchHit:
         source = item["_source"]

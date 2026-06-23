@@ -45,8 +45,11 @@ class IndexingService:
         job = self._job("full_repo_index", project, branch, None, new_sha, started_at)
         try:
             worktree = self.repo_cache.checkout(project, branch, commit_sha)
-            new_sha = self.repo_cache.head_sha(worktree)
-            stats = self._index_paths(project, branch, new_sha, worktree, self._walk(worktree))
+            try:
+                new_sha = self.repo_cache.head_sha(worktree)
+                stats = self._index_paths(project, branch, new_sha, worktree, self._walk(worktree))
+            finally:
+                self.repo_cache.cleanup(worktree)
             self._index_repo(project, branch, new_sha, "indexed")
             return job.model_copy(
                 update={
@@ -74,48 +77,51 @@ class IndexingService:
         job = self._job("incremental_repo_index", project, branch, old_sha, new_sha, started_at)
         try:
             worktree = self.repo_cache.checkout(project, branch, new_sha)
-            files_deleted = 0
-            files_renamed = 0
-            paths_to_index: list[Path] = []
-            old_paths_to_delete: list[str] = []
-            for change in changes:
-                if change.deleted:
-                    files_deleted += 1
-                    self.index.delete_file(
-                        self.settings.tenant_id,
-                        project.gitlab_project_id,
-                        branch,
-                        change.old_path,
-                    )
-                    continue
-                if change.renamed:
-                    files_renamed += 1
-                    old_paths_to_delete.append(change.old_path)
-                candidate = worktree / change.new_path
-                if candidate.exists() and candidate.is_file():
-                    if change.renamed and self._renamed_content_unchanged(
-                        project.gitlab_project_id,
-                        branch,
-                        change.old_path,
-                        candidate,
-                    ):
+            try:
+                files_deleted = 0
+                files_renamed = 0
+                paths_to_index: list[Path] = []
+                old_paths_to_delete: list[str] = []
+                for change in changes:
+                    if change.deleted:
+                        files_deleted += 1
+                        self.index.delete_file(
+                            self.settings.tenant_id,
+                            project.gitlab_project_id,
+                            branch,
+                            change.old_path,
+                        )
+                        continue
+                    if change.renamed:
+                        files_renamed += 1
                         old_paths_to_delete.append(change.old_path)
-                    paths_to_index.append(candidate)
-                else:
+                    candidate = worktree / change.new_path
+                    if candidate.exists() and candidate.is_file():
+                        if change.renamed and self._renamed_content_unchanged(
+                            project.gitlab_project_id,
+                            branch,
+                            change.old_path,
+                            candidate,
+                        ):
+                            old_paths_to_delete.append(change.old_path)
+                        paths_to_index.append(candidate)
+                    else:
+                        self.index.delete_file(
+                            self.settings.tenant_id,
+                            project.gitlab_project_id,
+                            branch,
+                            change.new_path,
+                        )
+                for old_path in sorted(set(old_paths_to_delete)):
                     self.index.delete_file(
                         self.settings.tenant_id,
                         project.gitlab_project_id,
                         branch,
-                        change.new_path,
+                        old_path,
                     )
-            for old_path in sorted(set(old_paths_to_delete)):
-                self.index.delete_file(
-                    self.settings.tenant_id,
-                    project.gitlab_project_id,
-                    branch,
-                    old_path,
-                )
-            stats = self._index_paths(project, branch, new_sha, worktree, paths_to_index)
+                stats = self._index_paths(project, branch, new_sha, worktree, paths_to_index)
+            finally:
+                self.repo_cache.cleanup(worktree)
             self._index_repo(project, branch, new_sha, "indexed")
             return job.model_copy(
                 update={

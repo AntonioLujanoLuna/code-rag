@@ -4,6 +4,7 @@ from urllib.parse import quote
 
 import httpx
 
+from code_rag.adapters.http import request_with_retries
 from code_rag.models import ChangedFile, GitLabProject
 from code_rag.settings import Settings
 
@@ -23,7 +24,13 @@ class GitLabClient:
     def get_project(self, project_id: str) -> GitLabProject:
         encoded = quote(str(project_id), safe="")
         with httpx.Client(timeout=30.0, headers=self._headers()) as client:
-            response = client.get(f"{self.api_url}/projects/{encoded}")
+            response = request_with_retries(
+                client,
+                "GET",
+                f"{self.api_url}/projects/{encoded}",
+                retries=self.settings.http_retries,
+                backoff_seconds=self.settings.http_retry_backoff_seconds,
+            )
             response.raise_for_status()
             return self._project(response.json())
 
@@ -33,9 +40,13 @@ class GitLabClient:
         page = 1
         with httpx.Client(timeout=30.0, headers=self._headers()) as client:
             while True:
-                response = client.get(
+                response = request_with_retries(
+                    client,
+                    "GET",
                     f"{self.api_url}/groups/{encoded}/projects",
                     params={"include_subgroups": True, "per_page": 100, "page": page},
+                    retries=self.settings.http_retries,
+                    backoff_seconds=self.settings.http_retry_backoff_seconds,
                 )
                 response.raise_for_status()
                 payload = response.json()
@@ -47,9 +58,13 @@ class GitLabClient:
     def compare(self, project_id: str, old_sha: str, new_sha: str) -> list[ChangedFile]:
         encoded = quote(str(project_id), safe="")
         with httpx.Client(timeout=60.0, headers=self._headers()) as client:
-            response = client.get(
+            response = request_with_retries(
+                client,
+                "GET",
                 f"{self.api_url}/projects/{encoded}/repository/compare",
                 params={"from": old_sha, "to": new_sha},
+                retries=self.settings.http_retries,
+                backoff_seconds=self.settings.http_retry_backoff_seconds,
             )
             response.raise_for_status()
             diffs = response.json().get("diffs", [])
@@ -78,4 +93,3 @@ class GitLabClient:
             default_branch=payload.get("default_branch"),
             description=payload.get("description"),
         )
-

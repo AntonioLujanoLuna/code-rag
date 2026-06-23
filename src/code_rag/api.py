@@ -1,14 +1,17 @@
 from __future__ import annotations
 
+import logging
+import time
 from typing import Any
 
-from fastapi import Depends, FastAPI, Header, HTTPException, status
+from fastapi import Depends, FastAPI, Header, HTTPException, Request, status
 from pydantic import BaseModel, Field
 
 from code_rag.adapters.gitlab_client import GitLabClient
 from code_rag.adapters.answer import ExtractiveAnswerProvider
 from code_rag.application.indexing import IndexingService
 from code_rag.application.jobs import IndexJobQueue
+from code_rag.application.metrics import MetricsRegistry
 from code_rag.application.permissions import PermissionService
 from code_rag.application.retrieval import RetrievalService
 from code_rag.dependencies import (
@@ -17,6 +20,7 @@ from code_rag.dependencies import (
     get_index,
     get_indexing_service,
     get_job_queue,
+    get_metrics,
     get_permission_service,
     get_retrieval_service,
 )
@@ -26,6 +30,7 @@ from code_rag.models import (
     AnswerResponse,
     ChangedFile,
     GitLabProject,
+    IndexJobResult,
     JobStatus,
     PermissionRecord,
     SearchRequest,
@@ -36,6 +41,38 @@ from code_rag.settings import Settings, get_settings
 
 
 app = FastAPI(title="GitLab Code RAG", version="0.1.0")
+logger = logging.getLogger(__name__)
+
+
+@app.middleware("http")
+async def observe_requests(request: Request, call_next):
+    started = time.perf_counter()
+    metrics = get_metrics()
+    try:
+        response = await call_next(request)
+    except Exception:
+        duration = time.perf_counter() - started
+        metrics.increment("http_requests_failed_total")
+        metrics.observe("http_request_duration_seconds", duration)
+        logger.exception(
+            "HTTP request failed",
+            extra={"method": request.method, "path": request.url.path, "duration_seconds": duration},
+        )
+        raise
+    duration = time.perf_counter() - started
+    metrics.increment("http_requests_total")
+    metrics.observe("http_request_duration_seconds", duration)
+    response.headers["X-Process-Time-Ms"] = f"{duration * 1000:.2f}"
+    logger.info(
+        "HTTP request completed",
+        extra={
+            "method": request.method,
+            "path": request.url.path,
+            "status_code": response.status_code,
+            "duration_seconds": duration,
+        },
+    )
+    return response
 
 
 class IndexProjectRequest(BaseModel):
@@ -63,6 +100,11 @@ def health() -> dict[str, str]:
     return {"status": "ok"}
 
 
+@app.get("/metrics")
+def metrics(registry: MetricsRegistry = Depends(get_metrics)) -> dict[str, dict]:
+    return registry.snapshot()
+
+
 @app.post("/indices/init")
 def init_indices(index=Depends(get_index)) -> dict[str, str]:
     index.ensure_indices()
@@ -78,12 +120,14 @@ def index_project(
 ):
     project = _project_from_request(request, gitlab)
     branch = request.branch or get_settings().branch
-    job_id = stable_id("full_repo_index", project.gitlab_project_id, branch, request.commit_sha or "HEAD")
+    job_id = stable_id("full_repo_index", project.gitlab_project_id, branch, None, request.commit_sha or "")
+    existing = service.index.get_job(job_id)
+    if existing and existing.status == "succeeded":
+        return _job_status_from_result(existing)
 
     def work():
         result = service.full_index_project(project, request.branch, request.commit_sha)
-        service.index.record_job(result)
-        return result
+        return _record_job_result(service, result, job_id)
 
     return queue.submit(job_id, "full_repo_index", work)
 
@@ -100,6 +144,9 @@ def incremental_index_project(
     job_id = stable_id(
         "incremental_repo_index", project.gitlab_project_id, branch, request.old_sha, request.new_sha
     )
+    existing = service.index.get_job(job_id)
+    if existing and existing.status == "succeeded":
+        return _job_status_from_result(existing)
 
     def work():
         changes = request.changes or gitlab.compare(request.project_id, request.old_sha, request.new_sha)
@@ -110,8 +157,7 @@ def incremental_index_project(
             changes=changes,
             branch=request.branch,
         )
-        service.index.record_job(result)
-        return result
+        return _record_job_result(service, result, job_id)
 
     return queue.submit(job_id, "incremental_repo_index", work)
 
@@ -155,6 +201,9 @@ def gitlab_webhook(
     if not old_sha or not new_sha:
         raise HTTPException(status_code=400, detail="Missing before/after commit SHA")
     job_id = stable_id("incremental_repo_index", project.gitlab_project_id, branch, old_sha, new_sha)
+    existing = service.index.get_job(job_id)
+    if existing and existing.status == "succeeded":
+        return _job_status_from_result(existing)
 
     def work():
         changes = gitlab.compare(project_id, old_sha, new_sha)
@@ -162,18 +211,24 @@ def gitlab_webhook(
             result = service.full_index_project(project, branch, new_sha)
         else:
             result = service.incremental_index_project(project, old_sha, new_sha, changes, branch)
-        service.index.record_job(result)
-        return result
+        return _record_job_result(service, result, job_id)
 
     return queue.submit(job_id, "incremental_repo_index", work)
 
 
 @app.get("/jobs/{job_id}", response_model=JobStatus)
-def get_job(job_id: str, queue: IndexJobQueue = Depends(get_job_queue)):
+def get_job(
+    job_id: str,
+    queue: IndexJobQueue = Depends(get_job_queue),
+    service: IndexingService = Depends(get_indexing_service),
+):
     status_result = queue.get(job_id)
-    if not status_result:
-        raise HTTPException(status_code=404, detail="Job not found")
-    return status_result
+    if status_result:
+        return status_result
+    persisted_result = service.index.get_job(job_id)
+    if persisted_result:
+        return _job_status_from_result(persisted_result)
+    raise HTTPException(status_code=404, detail="Job not found")
 
 
 @app.post("/permissions", response_model=PermissionRecord)
@@ -245,3 +300,25 @@ def _project_from_incremental_request(
             repo_url=request.repo_url,
         )
     return gitlab.get_project(request.project_id)
+
+
+def _job_status_from_result(result: IndexJobResult) -> JobStatus:
+    return JobStatus(
+        job_id=result.job_id,
+        job_type=result.job_type,
+        status=result.status,
+        submitted_at=result.started_at,
+        started_at=result.started_at,
+        finished_at=result.finished_at,
+        result=result,
+        error_message=result.error_message,
+    )
+
+
+def _record_job_result(
+    service: IndexingService, result: IndexJobResult, request_job_id: str
+) -> IndexJobResult:
+    if result.job_id != request_job_id:
+        result = result.model_copy(update={"job_id": request_job_id})
+    service.index.record_job(result)
+    return result

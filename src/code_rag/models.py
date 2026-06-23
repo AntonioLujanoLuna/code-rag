@@ -274,13 +274,13 @@ class PermissionRecord(BaseModel):
 
 
 class SearchRequest(BaseModel):
-    query: str
+    query: str = Field(..., min_length=1, max_length=2_000)
     user_id: str | None = None
-    allowed_project_ids: list[str] = Field(default_factory=list)
+    allowed_project_ids: list[str] = Field(default_factory=list, max_length=500)
     tenant_id: str | None = None
     branch: str | None = None
     repo_path_with_namespace: str | None = None
-    top_k: int = 8
+    top_k: int = Field(default=8, ge=1, le=50)
 
 
 class SearchHit(BaseModel):
@@ -330,7 +330,7 @@ class RepoMetadata(BaseModel):
 
 
 class AnswerRequest(SearchRequest):
-    max_context_chars: int = 12_000
+    max_context_chars: int = Field(default=12_000, ge=1_000, le=100_000)
 
 
 class SourceCitation(BaseModel):
