@@ -1,0 +1,2 @@
+"""Driven and driving adapters."""
+
