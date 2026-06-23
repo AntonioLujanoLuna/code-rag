@@ -1,4 +1,8 @@
 .cache/
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
 .env
 .pytest_cache/
 .ruff_cache/
