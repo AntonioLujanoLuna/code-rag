@@ -6,6 +6,7 @@ from datetime import UTC
 from pathlib import Path
 
 from code_rag.apps.chunking.raw_chunk import RawChunk
+from code_rag.apps.chunking.tree_sitter_chunker import TreeSitterChunker
 from code_rag.apps.classification.file_classifier import FileClassifier
 from code_rag.apps.metadata.repo_metadata_provider import RepoMetadataProvider
 from code_rag.apps.secrets.secret_scanner import SecretScanner
@@ -33,11 +34,19 @@ class ChunkBuilder:
         classifier: FileClassifier,
         secret_scanner: SecretScanner | None = None,
         repo_metadata: RepoMetadataProvider | None = None,
+        tree_sitter_chunker: TreeSitterChunker | None = None,
     ) -> None:
         self.settings = settings
         self.classifier = classifier
         self.secret_scanner = secret_scanner
         self.repo_metadata = repo_metadata
+        self.tree_sitter: TreeSitterChunker | None
+        if tree_sitter_chunker is not None:
+            self.tree_sitter = tree_sitter_chunker
+        elif settings.use_tree_sitter:
+            self.tree_sitter = TreeSitterChunker(settings)
+        else:
+            self.tree_sitter = None
 
     def build_file(
         self,
@@ -117,10 +126,17 @@ class ChunkBuilder:
         elif metadata.file_class in {FileClass.CONFIG, FileClass.CI_CD, FileClass.DEPLOYMENT}:
             chunks = self._fixed_size_chunks(content, ChunkKind.CONFIG_BLOCK)
         else:
-            chunks = self._regex_code_chunks(content)
+            chunks = self._ast_or_regex_chunks(metadata.language, content)
         if not chunks:
             chunks = self._fixed_size_chunks(content, ChunkKind.FILE)
         return chunks
+
+    def _ast_or_regex_chunks(self, language: str, content: str) -> list[RawChunk]:
+        if self.tree_sitter is not None:
+            ts_chunks = self.tree_sitter.chunk(language, content)
+            if ts_chunks is not None:
+                return self._split_large_chunks(ts_chunks)
+        return self._regex_code_chunks(content)
 
     def _python_chunks(self, content: str) -> list[RawChunk]:
         lines = content.splitlines()

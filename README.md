@@ -14,8 +14,11 @@ reranking.
 - GitLab project discovery and compare API client.
 - Local clone/fetch cache using `git`.
 - File classification, ignore rules, binary/generated/vendor detection.
-- Syntax-aware chunking for Python plus pragmatic regex chunking for common
-  JVM/JS/TS/C-like languages, with text fallback for docs/config.
+- Syntax-aware chunking: Python via the stdlib AST, and tree-sitter AST
+  chunking for JS/TS, Java, Go, Rust, C/C++, C#, Ruby and PHP (one definition
+  per chunk, with parent nesting, calls, imports and references). Regex chunking
+  is the fallback when a grammar is unavailable, and text chunking covers
+  docs/config.
 - Elasticsearch mappings for:
   - `code_chunks_v1`
   - `code_symbols_v1`
@@ -248,6 +251,10 @@ src/code_rag/
 The overloaded search/index port was split into focused `SearchPort`,
 `JobStorePort`, and `RepoStorePort` protocols so each service depends only on
 what it uses.
+
+Tree-sitter grammars are an optional install (`pip install -e ".[tree-sitter]"`);
+each grammar wheel bundles its compiled parser so there is no runtime download.
+Set `CODE_RAG_USE_TREE_SITTER=false` to force the regex chunker.
 
 ## Production notes
 

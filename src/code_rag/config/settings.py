@@ -54,6 +54,9 @@ class Settings(BaseSettings):
     index_file_workers: int = 4
     # Cap on how many references/calls a single chunk records, to bound index size.
     max_symbol_references: int = 100
+    # Use tree-sitter AST chunking for non-Python languages when a grammar is
+    # installed; falls back to regex chunking otherwise.
+    use_tree_sitter: bool = True
     # Reuse stored embeddings when a chunk's embedding input hash is unchanged.
     reuse_existing_embeddings: bool = True
 
