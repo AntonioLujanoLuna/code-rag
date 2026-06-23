@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Protocol
 
-from code_rag.models import ChangedFile, GitLabProject
+from code_rag.domain.models import ChangedFile, GitLabProject
 
 
 class GitLabPort(Protocol):
@@ -14,4 +14,3 @@ class GitLabPort(Protocol):
 
     def compare(self, project_id: str, old_sha: str, new_sha: str) -> list[ChangedFile]:
         """Return file changes between two commits."""
-

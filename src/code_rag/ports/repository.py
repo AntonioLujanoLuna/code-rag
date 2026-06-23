@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Protocol
 
-from code_rag.models import GitLabProject
+from code_rag.domain.models import GitLabProject
 
 
 class RepoCachePort(Protocol):
