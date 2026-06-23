@@ -35,42 +35,70 @@ class ElasticsearchCodeIndex:
             kwargs["api_key"] = settings.elasticsearch_api_key
         self.client = Elasticsearch(settings.elasticsearch_url, **kwargs)
 
+    # --- Alias names (used for all reads and writes) ---
+
     @property
     def chunks_index(self) -> str:
-        return f"{self.settings.index_prefix}code_chunks_v1"
+        return f"{self.settings.index_prefix}code_chunks"
 
     @property
     def symbols_index(self) -> str:
-        return f"{self.settings.index_prefix}code_symbols_v1"
+        return f"{self.settings.index_prefix}code_symbols"
 
     @property
     def edges_index(self) -> str:
-        return f"{self.settings.index_prefix}code_edges_v1"
+        return f"{self.settings.index_prefix}code_edges"
 
     @property
     def files_index(self) -> str:
-        return f"{self.settings.index_prefix}code_files_v1"
+        return f"{self.settings.index_prefix}code_files"
 
     @property
     def repos_index(self) -> str:
-        return f"{self.settings.index_prefix}code_repos_v1"
+        return f"{self.settings.index_prefix}code_repos"
 
     @property
     def jobs_index(self) -> str:
-        return f"{self.settings.index_prefix}code_index_jobs_v1"
+        return f"{self.settings.index_prefix}code_index_jobs"
 
     @property
     def job_status_index(self) -> str:
-        return f"{self.settings.index_prefix}code_job_status_v1"
+        return f"{self.settings.index_prefix}code_job_status"
+
+    # --- Versioned backing index names ---
+
+    def _backing(self, alias: str) -> str:
+        return f"{alias}_v{self.settings.index_version}"
 
     def ensure_indices(self) -> None:
-        self._ensure(self.chunks_index, mappings.chunks_mapping(self.settings.embedding_dimension))
-        self._ensure(self.symbols_index, mappings.symbols_mapping())
-        self._ensure(self.edges_index, mappings.edges_mapping())
-        self._ensure(self.files_index, mappings.files_mapping())
-        self._ensure(self.repos_index, mappings.repos_mapping())
-        self._ensure(self.jobs_index, mappings.jobs_mapping())
-        self._ensure(self.job_status_index, mappings.job_status_mapping())
+        self._ensure(
+            self.chunks_index,
+            self._backing(self.chunks_index),
+            mappings.chunks_mapping(self.settings.embedding_dimension),
+        )
+        self._ensure(
+            self.symbols_index, self._backing(self.symbols_index), mappings.symbols_mapping()
+        )
+        self._ensure(self.edges_index, self._backing(self.edges_index), mappings.edges_mapping())
+        self._ensure(self.files_index, self._backing(self.files_index), mappings.files_mapping())
+        self._ensure(self.repos_index, self._backing(self.repos_index), mappings.repos_mapping())
+        self._ensure(self.jobs_index, self._backing(self.jobs_index), mappings.jobs_mapping())
+        self._ensure(
+            self.job_status_index,
+            self._backing(self.job_status_index),
+            mappings.job_status_mapping(),
+        )
+
+    def swap_alias(self, alias: str, old_backing: str, new_backing: str) -> None:
+        """Atomically move an alias from one backing index to another."""
+        self.client.indices.update_aliases(
+            body={
+                "actions": [
+                    {"remove": {"index": old_backing, "alias": alias}},
+                    {"add": {"index": new_backing, "alias": alias}},
+                ]
+            }
+        )
 
     def replace_file(
         self,
@@ -362,11 +390,56 @@ class ElasticsearchCodeIndex:
             hit.metadata["edge_match"] = True
         return hits
 
-    def _ensure(self, index: str, mapping: dict) -> None:
-        if not self.client.indices.exists(index=index):
+    def prune_orphaned_edges(self, tenant_id: str, project_id: str, branch: str) -> int:
+        """Delete edges whose source chunk no longer exists in the chunks index."""
+        agg_response = self.client.search(
+            index=self.edges_index,
+            query={
+                "bool": {
+                    "filter": [
+                        {"term": {"tenant_id": tenant_id}},
+                        {"term": {"branch": branch}},
+                        {"term": {"source_repo_project_id": str(project_id)}},
+                    ]
+                }
+            },
+            aggs={"source_ids": {"terms": {"field": "source_symbol_id", "size": 50_000}}},
+            size=0,
+        )
+        all_source_ids: list[str] = [
+            bucket["key"]
+            for bucket in agg_response["aggregations"]["source_ids"]["buckets"]
+            if bucket["key"]
+        ]
+        if not all_source_ids:
+            return 0
+        mget_response = self.client.mget(index=self.chunks_index, ids=all_source_ids, source=False)
+        existing_ids = {doc["_id"] for doc in mget_response.get("docs", []) if doc.get("found")}
+        orphaned = [sid for sid in all_source_ids if sid not in existing_ids]
+        if not orphaned:
+            return 0
+        result = self.client.delete_by_query(
+            index=self.edges_index,
+            query={
+                "bool": {
+                    "filter": [
+                        {"term": {"tenant_id": tenant_id}},
+                        {"term": {"branch": branch}},
+                        {"terms": {"source_symbol_id": orphaned}},
+                    ]
+                }
+            },
+            conflicts="proceed",
+        )
+        return int(result.get("deleted", 0))
+
+    def _ensure(self, alias: str, backing: str, mapping: dict) -> None:
+        if not self.client.indices.exists(index=backing):
             self.client.indices.create(
-                index=index, mappings=mapping["mappings"], settings=mapping["settings"]
+                index=backing, mappings=mapping["mappings"], settings=mapping["settings"]
             )
+        if not self.client.indices.exists_alias(name=alias):
+            self.client.indices.put_alias(index=backing, name=alias)
 
     def _filters(self, filters: dict) -> list[dict]:
         clauses = [
@@ -379,14 +452,13 @@ class ElasticsearchCodeIndex:
                 }
             },
         ]
-        if filters.get("repo_path_with_namespace"):
-            clauses.append(
-                {"term": {"repo_path_with_namespace": filters["repo_path_with_namespace"]}}
-            )
+        repo_paths = filters.get("repo_paths_with_namespace")
+        if repo_paths:
+            clauses.append({"terms": {"repo_path_with_namespace": repo_paths}})
         return clauses
 
     def _edge_filters(self, filters: dict) -> list[dict]:
-        return [
+        clauses = [
             {"term": {"tenant_id": filters["tenant_id"]}},
             {"term": {"branch": filters["branch"]}},
             {
@@ -395,6 +467,10 @@ class ElasticsearchCodeIndex:
                 }
             },
         ]
+        repo_paths = filters.get("repo_paths_with_namespace")
+        if repo_paths:
+            clauses.append({"terms": {"source_repo_path_with_namespace": repo_paths}})
+        return clauses
 
     def _symbol_filters(self, filters: dict) -> list[dict]:
         clauses = [
@@ -406,10 +482,9 @@ class ElasticsearchCodeIndex:
                 }
             },
         ]
-        if filters.get("repo_path_with_namespace"):
-            clauses.append(
-                {"term": {"repo_path_with_namespace": filters["repo_path_with_namespace"]}}
-            )
+        repo_paths = filters.get("repo_paths_with_namespace")
+        if repo_paths:
+            clauses.append({"terms": {"repo_path_with_namespace": repo_paths}})
         return clauses
 
     def _chunk_ids_query(self, chunk_ids: list[str], filters: dict) -> dict:

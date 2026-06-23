@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 from threading import RLock
+from typing import ClassVar
 
 try:
     from tree_sitter import Language, Node, Parser
@@ -97,12 +98,17 @@ class TreeSitterChunker:
     functions and methods with accurate line boundaries, parent nesting, calls,
     imports and references. Languages without a grammar return ``None`` so the
     caller can fall back to the regex chunker.
+
+    Grammar objects are cached at the class level so the expensive import +
+    Language() call happens at most once per process per language, regardless of
+    how many ChunkBuilder / TreeSitterChunker instances are created.
     """
+
+    _language_cache: ClassVar[dict[str, Language | None]] = {}
+    _cache_lock: ClassVar[RLock] = RLock()
 
     def __init__(self, settings: Settings) -> None:
         self.settings = settings
-        self._languages: dict[str, Language | None] = {}
-        self._lock = RLock()
 
     def supports(self, language: str) -> bool:
         return self._language(language) is not None
@@ -126,9 +132,13 @@ class TreeSitterChunker:
     def _language(self, language: str) -> Language | None:
         if Language is None:
             return None
-        with self._lock:
-            if language in self._languages:
-                return self._languages[language]
+        # Fast path: GIL makes dict reads effectively atomic in CPython.
+        if language in TreeSitterChunker._language_cache:
+            return TreeSitterChunker._language_cache[language]
+        with TreeSitterChunker._cache_lock:
+            # Double-check after acquiring the lock.
+            if language in TreeSitterChunker._language_cache:
+                return TreeSitterChunker._language_cache[language]
             grammar = _GRAMMARS.get(language)
             loaded: Language | None = None
             if grammar:
@@ -138,8 +148,7 @@ class TreeSitterChunker:
                     loaded = Language(getattr(module, attribute)())
                 except Exception:
                     logger.info("tree-sitter grammar unavailable for %s", language)
-                    loaded = None
-            self._languages[language] = loaded
+            TreeSitterChunker._language_cache[language] = loaded
             return loaded
 
     def _walk(

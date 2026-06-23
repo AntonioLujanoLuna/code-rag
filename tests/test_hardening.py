@@ -41,14 +41,14 @@ def test_edge_search_applies_chunk_filters_for_repo_path() -> None:
             "tenant_id": "tenant",
             "branch": "develop",
             "allowed_project_ids": ["123"],
-            "repo_path_with_namespace": "group/payments",
+            "repo_paths_with_namespace": ["group/payments"],
         },
         10,
     )
 
     chunk_filters = client.chunk_query["bool"]["filter"]
     assert {"ids": {"values": ["chunk-1"]}} in chunk_filters
-    assert {"term": {"repo_path_with_namespace": "group/payments"}} in chunk_filters
+    assert {"terms": {"repo_path_with_namespace": ["group/payments"]}} in chunk_filters
     assert {"term": {"active_snapshot": True}} in chunk_filters
 
 

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor, as_completed
+
 import httpx
 
 from code_rag.adapters.embeddings.hash_embedding_provider import HashEmbeddingProvider
@@ -34,12 +36,28 @@ class HttpLateInteractionEmbeddingProvider:
             return []
         if not self.settings.embedding_service_url:
             return self.fallback.embed_documents(texts)
+        batch_size = self.settings.max_embedding_batch_size
+        if batch_size > 0 and len(texts) > batch_size:
+            return self._parallel_embed(texts, batch_size)
         return self._embed_batch(texts, "document")
 
     def embed_query(self, text: str) -> EmbeddingResult:
         if not self.settings.embedding_service_url:
             return self.fallback.embed_query(text)
         return self._embed_batch([text], "query")[0]
+
+    def _parallel_embed(self, texts: list[str], batch_size: int) -> list[EmbeddingResult]:
+        batches = [texts[i : i + batch_size] for i in range(0, len(texts), batch_size)]
+        results: list[list[EmbeddingResult]] = [[] for _ in batches]
+        workers = min(len(batches), 8)
+        with ThreadPoolExecutor(max_workers=workers, thread_name_prefix="code-rag-embed") as pool:
+            future_to_index = {
+                pool.submit(self._embed_batch, batch, "document"): idx
+                for idx, batch in enumerate(batches)
+            }
+            for future in as_completed(future_to_index):
+                results[future_to_index[future]] = future.result()
+        return [item for batch_results in results for item in batch_results]
 
     def _embed_batch(self, texts: list[str], input_type: str) -> list[EmbeddingResult]:
         payload = {"texts": texts, "input_type": input_type}
