@@ -45,6 +45,7 @@ class CodeChunk(BaseModel):
     symbol_fqn: str | None = None
     symbol_kind: str | None = None
     parent_symbol_fqn: str | None = None
+    parent_chunk_id: str | None = None
     line_start: int
     line_end: int
     gitlab_blob_url: str

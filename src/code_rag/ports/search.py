@@ -44,3 +44,6 @@ class SearchPort(Protocol):
 
     def edge_search(self, identifiers: list[str], filters: dict, size: int) -> list[SearchHit]:
         """Search graph edges and return related chunks."""
+
+    def prune_orphaned_edges(self, tenant_id: str, project_id: str, branch: str) -> int:
+        """Delete edges whose source chunk no longer exists. Returns count deleted."""

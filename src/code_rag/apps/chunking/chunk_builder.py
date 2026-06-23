@@ -103,6 +103,7 @@ class ChunkBuilder:
         metadata.secret_high_confidence_count = sum(
             chunk.secret_high_confidence_count for chunk in chunks
         )
+        chunks = self._link_parent_chunks(chunks)
         symbols = [
             self._to_symbol(metadata, chunk, raw)
             for chunk, raw in zip(chunks, raw_chunks, strict=True)
@@ -376,6 +377,7 @@ class ChunkBuilder:
     def _fixed_size_chunks(self, content: str, kind: ChunkKind) -> list[RawChunk]:
         lines = content.splitlines()
         chunks: list[RawChunk] = []
+        overlap = max(0, self.settings.chunk_overlap_lines)
         start = 0
         while start < len(lines):
             current: list[str] = []
@@ -393,7 +395,8 @@ class ChunkBuilder:
                     text="\n".join(current),
                 )
             )
-            start = end
+            # Advance start but carry `overlap` lines of context into the next chunk.
+            start = max(start + 1, end - overlap)
         return chunks
 
     def _split_large_chunks(self, chunks: list[RawChunk]) -> list[RawChunk]:
@@ -403,6 +406,24 @@ class ChunkBuilder:
                 result.append(chunk)
                 continue
             result.extend(self._fixed_size_chunks(chunk.text, chunk.kind))
+        return result
+
+    def _link_parent_chunks(self, chunks: list[CodeChunk]) -> list[CodeChunk]:
+        class_ids: dict[str, str] = {
+            c.symbol_name: c.chunk_id
+            for c in chunks
+            if c.chunk_kind == ChunkKind.CLASS_DEFINITION and c.symbol_name
+        }
+        if not class_ids:
+            return chunks
+        result: list[CodeChunk] = []
+        for chunk in chunks:
+            if chunk.parent_symbol_fqn:
+                top_parent = chunk.parent_symbol_fqn.split(".")[0]
+                parent_id = class_ids.get(top_parent)
+                if parent_id:
+                    chunk = chunk.model_copy(update={"parent_chunk_id": parent_id})
+            result.append(chunk)
         return result
 
     def _to_chunk(self, metadata: FileMetadata, raw: RawChunk) -> CodeChunk:

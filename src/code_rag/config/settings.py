@@ -79,6 +79,20 @@ class Settings(BaseSettings):
     rerank_late_interaction_weight: float = 0.1
 
     index_prefix: str = ""
+    index_version: int = 1
+
+    # Split large embed batches into sub-batches sent concurrently. 0 = disabled.
+    max_embedding_batch_size: int = 0
+
+    # HyDE: generate a hypothetical code snippet to augment the vector query.
+    hyde_enabled: bool = False
+    hyde_model: str = ""  # falls back to anthropic_model when empty
+
+    # Lines of context carried forward between consecutive fixed-size chunks.
+    chunk_overlap_lines: int = 3
+
+    # Expand short BM25 queries with CamelCase/snake_case splits and synonyms.
+    query_expansion_enabled: bool = True
 
     source_extensions: set[str] = Field(
         default_factory=lambda: {

@@ -57,6 +57,9 @@ class IndexingService:
             finally:
                 self.repo_cache.cleanup(worktree)
             self._index_repo(project, branch, new_sha, "indexed")
+            self.index.prune_orphaned_edges(
+                self.settings.tenant_id, project.gitlab_project_id, branch
+            )
             return job.model_copy(
                 update={
                     **stats,

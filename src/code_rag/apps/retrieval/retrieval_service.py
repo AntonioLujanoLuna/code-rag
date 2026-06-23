@@ -5,7 +5,9 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 
 from code_rag.apps.permissions.permission_service import PermissionService
+from code_rag.apps.retrieval.hyde_expander import HydeExpander
 from code_rag.apps.retrieval.query_classifier import QueryClassifier
+from code_rag.apps.retrieval.query_expander import QueryExpander
 from code_rag.apps.retrieval.reranker import Reranker
 from code_rag.config.settings import Settings
 from code_rag.domain.models import SearchHit, SearchRequest, SearchResponse
@@ -24,6 +26,8 @@ class RetrievalService:
         permissions: PermissionService | None = None,
         classifier: QueryClassifier | None = None,
         reranker: Reranker | None = None,
+        hyde_expander: HydeExpander | None = None,
+        query_expander: QueryExpander | None = None,
     ) -> None:
         self.settings = settings
         self.index = index
@@ -31,6 +35,8 @@ class RetrievalService:
         self.permissions = permissions
         self.classifier = classifier or QueryClassifier()
         self.reranker = reranker or Reranker(settings)
+        self.hyde_expander = hyde_expander or HydeExpander(settings)
+        self.query_expander = query_expander or QueryExpander(settings)
 
     def search(self, request: SearchRequest) -> SearchResponse:
         started = time.perf_counter()
@@ -44,18 +50,23 @@ class RetrievalService:
             if self.permissions
             else request.allowed_project_ids
         )
+        # Merge single and multi repo path fields for backward compatibility.
+        repo_paths: list[str] = list(request.repo_paths_with_namespace)
+        if request.repo_path_with_namespace and request.repo_path_with_namespace not in repo_paths:
+            repo_paths.append(request.repo_path_with_namespace)
         filters = {
             "tenant_id": tenant_id,
             "branch": request.branch or self.settings.branch,
             "allowed_project_ids": allowed_projects,
-            "repo_path_with_namespace": request.repo_path_with_namespace,
+            "repo_paths_with_namespace": repo_paths if repo_paths else None,
         }
+        expanded_query = self.query_expander.expand(request.query)
         # Run the independent retrieval legs concurrently to cut latency. The
-        # dense vector search depends on the query embedding, so it is issued
-        # once that future resolves.
+        # dense vector search depends on the query embedding (optionally augmented
+        # by a HyDE snippet), so it is issued once that resolves.
         with ThreadPoolExecutor(max_workers=4, thread_name_prefix="code-rag-search") as pool:
             lexical_future = pool.submit(
-                self.index.lexical_search, request.query, filters, request.top_k * 2
+                self.index.lexical_search, expanded_query, filters, request.top_k * 2
             )
             symbol_future = pool.submit(
                 self.index.symbol_search, identifiers, filters, request.top_k
@@ -65,6 +76,12 @@ class RetrievalService:
             )
             embedding_future = pool.submit(self.embeddings.embed_query, request.query)
             query_embedding = embedding_future.result()
+            if self.settings.hyde_enabled:
+                hyde_snippet = self.hyde_expander.expand(request.query)
+                if hyde_snippet:
+                    query_embedding = self.embeddings.embed_query(
+                        f"{request.query}\n{hyde_snippet}"
+                    )
             vector_future = pool.submit(
                 self.index.vector_search, query_embedding.dense, filters, request.top_k * 2
             )
@@ -86,6 +103,7 @@ class RetrievalService:
                 "hit_count": len(hits),
                 "duration_seconds": duration,
                 "tenant_id": tenant_id,
+                "repo_count": len(repo_paths),
             },
         )
         return SearchResponse(
