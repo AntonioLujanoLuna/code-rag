@@ -103,6 +103,46 @@ async def test_graph_expansion_can_be_disabled() -> None:
     assert "neighbor" not in {hit.chunk_id for hit in response.hits}
 
 
+class CountingEmbeddings(HashEmbeddingProvider):
+    def __init__(self, dimension: int) -> None:
+        super().__init__(dimension)
+        self.calls = 0
+
+    def embed_query(self, text: str):  # type: ignore[override]
+        self.calls += 1
+        return super().embed_query(text)
+
+
+@pytest.mark.asyncio
+async def test_query_embedding_cache_hits_and_is_bounded() -> None:
+    embeddings = CountingEmbeddings(16)
+    settings = Settings(query_embedding_cache_max_entries=2)
+    service = RetrievalService(settings, FakeIndex(), embeddings)
+
+    await service.search(SearchRequest(query="alpha", allowed_project_ids=["123"]))
+    await service.search(SearchRequest(query="alpha", allowed_project_ids=["123"]))
+    # Second identical query is served from cache: no extra embedding call.
+    assert embeddings.calls == 1
+
+    await service.search(SearchRequest(query="beta", allowed_project_ids=["123"]))
+    await service.search(SearchRequest(query="gamma", allowed_project_ids=["123"]))
+    # Cap is 2, so the oldest ("alpha") was evicted and must be recomputed.
+    assert len(service._query_embedding_cache) == 2
+    await service.search(SearchRequest(query="alpha", allowed_project_ids=["123"]))
+    assert embeddings.calls == 4
+
+
+def test_query_embedding_cache_disabled_when_max_entries_zero() -> None:
+    embeddings = CountingEmbeddings(16)
+    settings = Settings(query_embedding_cache_max_entries=0)
+    service = RetrievalService(settings, FakeIndex(), embeddings)
+
+    service.search_sync(SearchRequest(query="alpha", allowed_project_ids=["123"]))
+    service.search_sync(SearchRequest(query="alpha", allowed_project_ids=["123"]))
+    assert embeddings.calls == 2
+    assert len(service._query_embedding_cache) == 0
+
+
 def hit(
     chunk_id: str,
     score: float,

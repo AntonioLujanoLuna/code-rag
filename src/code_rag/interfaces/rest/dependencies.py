@@ -149,6 +149,7 @@ def get_cross_encoder() -> HttpCrossEncoderReranker:
     return HttpCrossEncoderReranker(get_settings())
 
 
+@lru_cache
 def get_retrieval_service() -> RetrievalService:
     settings = get_settings()
     return RetrievalService(
