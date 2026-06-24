@@ -70,8 +70,16 @@ ignore_missing_imports = true
 explicit_package_bases = true
 mypy_path = "src"
 
+# Newer numpy ships stubs that use the 3.12 `type` statement, which mypy rejects
+# when targeting 3.11. We only use numpy at runtime, so skip analysing its stubs.
+[[tool.mypy.overrides]]
+module = "numpy.*"
+follow_imports = "skip"
+
 [tool.pytest.ini_options]
-pythonpath = ["src"]
+# Include the repo root so tests can `import tests.conftest` under a bare
+# `pytest` invocation (which, unlike `python -m pytest`, omits the CWD).
+pythonpath = ["src", "."]
 testpaths = ["tests"]
 # Treat warnings as errors so regressions surface in CI, but allow-list the
 # third-party Starlette TestClient/httpx deprecation we cannot fix here.
