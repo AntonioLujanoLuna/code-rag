@@ -85,7 +85,13 @@ class Settings(BaseSettings):
     admin_api_keys: list[dict[str, str]] = Field(default_factory=list)
     api_key_users: dict[str, list[dict[str, str]]] = Field(default_factory=dict)
     query_embedding_cache_ttl_seconds: float = 300.0
+    # Hard cap on cached query embeddings so unique-query traffic cannot grow the
+    # cache without bound. Least-recently-used entries are evicted past this size.
+    query_embedding_cache_max_entries: int = 1024
     permission_cache_ttl_seconds: float = 60.0
+
+    # Bounded worker pool shared across requests for the concurrent retrieval legs.
+    retrieval_max_workers: int = 8
 
     # Retrieval rerank weights (made configurable instead of magic numbers).
     rerank_identifier_boost: float = 0.15

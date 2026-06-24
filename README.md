@@ -291,6 +291,9 @@ structured JSON (with `extra` context fields preserved) for log aggregators;
 
 ## Project structure
 
+See [ARCHITECTURE.md](ARCHITECTURE.md) for the design rationale, the indexing
+and retrieval pipelines, and the observability/operations model.
+
 The package follows a hexagonal (ports-and-adapters) layout, one class per file:
 
 ```
@@ -379,3 +382,9 @@ CI runs the evaluator against a seeded Elasticsearch service container.
 The first version stores only active snapshots. Historical snapshots can be
 added by changing replacement semantics from delete-and-insert to
 `active_snapshot=false` plus insert.
+
+Indices are addressed through aliases backed by versioned indices
+(`code_chunks_v1`, …). To roll a mapping change, bump `CODE_RAG_INDEX_VERSION`
+and run `code-rag reindex`, which builds the new backing index, copies
+documents, and atomically swaps the alias. See [docs/MIGRATIONS.md](docs/MIGRATIONS.md)
+for the full runbook.

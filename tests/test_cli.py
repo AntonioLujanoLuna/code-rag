@@ -41,7 +41,7 @@ def test_app_help_lists_commands() -> None:
     result = runner.invoke(cli_app.app, ["--help"])
     assert result.exit_code == 0
     output = _normalize(result.output)
-    for command in ("index-project", "search", "answer", "sync-permissions"):
+    for command in ("index-project", "search", "answer", "sync-permissions", "reindex"):
         assert _normalize(command) in output
 
 
