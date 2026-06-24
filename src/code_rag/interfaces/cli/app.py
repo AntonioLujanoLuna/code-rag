@@ -6,6 +6,8 @@ from pathlib import Path
 import typer
 
 from code_rag.adapters.gitlab.gitlab_client import GitLabClient
+from code_rag.config.logging import configure_logging
+from code_rag.config.settings import get_settings
 from code_rag.domain.models import ChangedFile, GitLabProject, PermissionRecord, SearchRequest
 from code_rag.interfaces.rest.dependencies import (
     get_answer_provider,
@@ -19,6 +21,12 @@ from code_rag.interfaces.rest.dependencies import (
 )
 
 app = typer.Typer(help="GitLab code RAG indexer and retrieval service.")
+
+
+@app.callback()
+def _configure() -> None:
+    settings = get_settings()
+    configure_logging(settings.log_level, settings.log_format)
 
 
 @app.command("init-indices")

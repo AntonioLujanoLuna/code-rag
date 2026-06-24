@@ -89,6 +89,10 @@ Important defaults:
 - `CODE_RAG_SECRET_SCANNING_ENABLED=true`
 - `CODE_RAG_SKIP_CHUNKS_WITH_HIGH_CONFIDENCE_SECRETS=false`
 - `CODE_RAG_MIN_ANSWER_SOURCES=1`
+- `CODE_RAG_LOG_LEVEL=INFO`
+- `CODE_RAG_LOG_FORMAT=json` (`json` for aggregators, `text` for local dev)
+- `CODE_RAG_RATE_LIMIT_REQUESTS_PER_MINUTE=0` (0 disables per-identity rate
+  limiting on `/search` and `/answer`)
 
 Every retrieval should pass `user_id`. The service resolves allowed GitLab
 project IDs from its permission cache and intersects them with optional request
@@ -223,6 +227,24 @@ X-Gitlab-Token: <CODE_RAG_GITLAB_WEBHOOK_SECRET>
 ```
 
 The webhook indexes only pushes to the configured branch.
+
+## Health checks
+
+Two probes are exposed for load balancers and orchestrators:
+
+- `GET /health` — liveness. Cheap, no I/O; returns `200` whenever the process
+  is serving.
+- `GET /ready` — readiness. Pings Elasticsearch and returns `503` when it is
+  unreachable so traffic is not routed to an instance that cannot serve.
+
+Per-identity rate limiting can be enabled on `/search` and `/answer` with
+`CODE_RAG_RATE_LIMIT_REQUESTS_PER_MINUTE`. Requests are keyed by the
+authenticated `user_id` (falling back to the client host), and exceeding the
+limit returns `429`.
+
+Logs are emitted to stdout. `CODE_RAG_LOG_FORMAT=json` produces single-line
+structured JSON (with `extra` context fields preserved) for log aggregators;
+`text` is human-readable for local development.
 
 ## Project structure
 

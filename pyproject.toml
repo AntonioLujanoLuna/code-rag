@@ -3,6 +3,7 @@ name = "code-rag"
 version = "0.1.0"
 description = "GitLab codebase RAG indexer and retrieval service backed by Elasticsearch."
 readme = "README.md"
+license = { text = "MIT" }
 requires-python = ">=3.11"
 dependencies = [
   "elasticsearch>=8.13.0",
@@ -72,3 +73,9 @@ mypy_path = "src"
 [tool.pytest.ini_options]
 pythonpath = ["src"]
 testpaths = ["tests"]
+# Treat warnings as errors so regressions surface in CI, but allow-list the
+# third-party Starlette TestClient/httpx deprecation we cannot fix here.
+filterwarnings = [
+  "error",
+  "ignore:Using `httpx`",
+]

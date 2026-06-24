@@ -89,6 +89,10 @@ class ElasticsearchCodeIndex:
             mappings.job_status_mapping(),
         )
 
+    def ping(self) -> bool:
+        """Return True if the Elasticsearch cluster is reachable."""
+        return bool(self.client.ping())
+
     def swap_alias(self, alias: str, old_backing: str, new_backing: str) -> None:
         """Atomically move an alias from one backing index to another."""
         self.client.indices.update_aliases(

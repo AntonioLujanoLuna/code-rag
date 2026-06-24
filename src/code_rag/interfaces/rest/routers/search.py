@@ -6,7 +6,7 @@ from code_rag.apps.auth.authenticator import Authenticator
 from code_rag.apps.retrieval.retrieval_service import RetrievalService
 from code_rag.domain.models import AuthContext, SearchRequest, SearchResponse
 from code_rag.interfaces.rest.dependencies import get_authenticator, get_retrieval_service
-from code_rag.interfaces.rest.security import require_auth
+from code_rag.interfaces.rest.security import enforce_rate_limit
 
 router = APIRouter()
 
@@ -14,7 +14,7 @@ router = APIRouter()
 @router.post("/search", response_model=SearchResponse)
 def search(
     request: SearchRequest,
-    context: AuthContext = Depends(require_auth),
+    context: AuthContext = Depends(enforce_rate_limit),
     authenticator: Authenticator = Depends(get_authenticator),
     service: RetrievalService = Depends(get_retrieval_service),
 ) -> SearchResponse:
