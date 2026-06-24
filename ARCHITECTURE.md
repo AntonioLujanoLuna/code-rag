@@ -73,9 +73,12 @@ real Elasticsearch adapter is never imported in unit tests.
 1. **Clone/fetch** the repo at the target branch/commit via `adapters/git`
    (a local cache with per-repo locks).
 2. **Classify** each file (`apps/classification`) — skip binary/generated/vendor.
-3. **Chunk** (`apps/chunking`): Python via the stdlib AST; other languages via
-   tree-sitter when a grammar is installed, else a regex fallback, else plain
-   text. Each chunk carries symbols, calls, imports, and references.
+3. **Chunk** (`apps/chunking`): `ChunkBuilder` orchestrates file metadata and
+   model assembly, delegating raw chunking to focused strategies in
+   `chunking/strategies/` — Python via the stdlib AST (`PythonChunker`), other
+   languages via tree-sitter when a grammar is installed (`TreeSitterChunker`),
+   else a regex fallback (`RegexChunker`), else plain text (`TextChunker`). Each
+   chunk carries symbols, calls, imports, and references.
 4. **Redact secrets** (`apps/secrets`) before any text leaves for embedding.
 5. **Embed** (`ports/EmbeddingProvider`): dense + late-interaction vectors,
    reusing stored vectors when a chunk's content hash is unchanged.

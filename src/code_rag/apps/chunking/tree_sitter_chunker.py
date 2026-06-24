@@ -12,82 +12,31 @@ except ImportError:  # pragma: no cover - exercised only without the optional de
     Parser = None  # type: ignore[assignment,misc]
 
 from code_rag.apps.chunking.raw_chunk import RawChunk
+from code_rag.apps.chunking.tree_sitter_node_types import (
+    BODY_TYPES as _BODY_TYPES,
+)
+from code_rag.apps.chunking.tree_sitter_node_types import (
+    CALL_TYPES as _CALL_TYPES,
+)
+from code_rag.apps.chunking.tree_sitter_node_types import (
+    CLASS_TYPES as _CLASS_TYPES,
+)
+from code_rag.apps.chunking.tree_sitter_node_types import (
+    DECORATOR_TYPES as _DECORATOR_TYPES,
+)
+from code_rag.apps.chunking.tree_sitter_node_types import (
+    FUNCTION_TYPES as _FUNCTION_TYPES,
+)
+from code_rag.apps.chunking.tree_sitter_node_types import (
+    GRAMMARS as _GRAMMARS,
+)
+from code_rag.apps.chunking.tree_sitter_node_types import (
+    IMPORT_TYPES as _IMPORT_TYPES,
+)
 from code_rag.config.settings import Settings
 from code_rag.domain.enums.chunk_kind import ChunkKind
 
 logger = logging.getLogger(__name__)
-
-# Our language name (see domain.languages) -> (module, language-factory attribute).
-# Each grammar ships its compiled parser in the wheel, so no runtime download.
-_GRAMMARS: dict[str, tuple[str, str]] = {
-    "javascript": ("tree_sitter_javascript", "language"),
-    "typescript": ("tree_sitter_typescript", "language_typescript"),
-    "java": ("tree_sitter_java", "language"),
-    "go": ("tree_sitter_go", "language"),
-    "rust": ("tree_sitter_rust", "language"),
-    "c": ("tree_sitter_c", "language"),
-    "cpp": ("tree_sitter_cpp", "language"),
-    "csharp": ("tree_sitter_c_sharp", "language"),
-    "ruby": ("tree_sitter_ruby", "language"),
-    "php": ("tree_sitter_php", "language_php"),
-    "kotlin": ("tree_sitter_kotlin", "language"),
-    "scala": ("tree_sitter_scala", "language"),
-}
-
-# Node types that denote a class-like container (children become its members).
-_CLASS_TYPES = {
-    "class_declaration",
-    "class_definition",
-    "class_specifier",
-    "class",
-    "interface_declaration",
-    "struct_specifier",
-    "struct_declaration",
-    "struct_item",
-    "type_spec",
-    "enum_declaration",
-    "enum_item",
-    "trait_item",
-    "trait_declaration",
-    "impl_item",
-    "module",
-    "mod_item",
-    "record_declaration",
-    "object_declaration",
-}
-# Node types that denote a function/method definition.
-_FUNCTION_TYPES = {
-    "function_declaration",
-    "function_definition",
-    "function_item",
-    "method_declaration",
-    "method_definition",
-    "method",
-    "constructor_declaration",
-}
-_CALL_TYPES = {
-    "call_expression",
-    "call",
-    "method_invocation",
-    "invocation_expression",
-    "function_call_expression",
-    "member_call_expression",
-    "scoped_call_expression",
-}
-_IMPORT_TYPES = {
-    "import_statement",
-    "import_declaration",
-    "import_from_statement",
-    "import_spec",
-    "using_directive",
-    "package_clause",
-    "use_declaration",
-    "namespace_use_declaration",
-    "preproc_include",
-}
-_DECORATOR_TYPES = {"decorator", "annotation", "marker_annotation", "attribute", "attribute_list"}
-# Field/child types whose subtrees we don't descend into when resolving a name.
-_BODY_TYPES = {"block", "body", "compound_statement", "class_body", "declaration_list"}
 
 
 class TreeSitterChunker:
