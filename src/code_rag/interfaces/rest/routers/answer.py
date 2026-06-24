@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from inspect import isawaitable
+
 from fastapi import APIRouter, Depends
 
 from code_rag.apps.auth.authenticator import Authenticator
@@ -23,7 +25,7 @@ router = APIRouter()
 
 
 @router.post("/answer", response_model=AnswerResponse)
-def answer(
+async def answer(
     request: AnswerRequest,
     context: AuthContext = Depends(enforce_rate_limit),
     authenticator: Authenticator = Depends(get_authenticator),
@@ -33,9 +35,10 @@ def answer(
     user_id = authenticator.resolve_user_id(context, request.user_id)
     if user_id != request.user_id:
         request = request.model_copy(update={"user_id": user_id})
-    search_response = retrieval.search(
+    search_result = retrieval.search(
         SearchRequest(**request.model_dump(exclude={"max_context_chars"}))
     )
+    search_response = await search_result if isawaitable(search_result) else search_result
     citations = [
         SourceCitation(
             index=index,

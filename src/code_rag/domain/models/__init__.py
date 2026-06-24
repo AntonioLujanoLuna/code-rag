@@ -11,6 +11,7 @@ from code_rag.domain.models.code_symbol import CodeSymbol
 from code_rag.domain.models.embedding_result import EmbeddingResult
 from code_rag.domain.models.file_metadata import FileMetadata
 from code_rag.domain.models.gitlab_project import GitLabProject
+from code_rag.domain.models.index_job_record import IndexJobRecord
 from code_rag.domain.models.index_job_result import IndexJobResult
 from code_rag.domain.models.job_status import JobStatus
 from code_rag.domain.models.permission_record import PermissionRecord
@@ -33,6 +34,7 @@ __all__ = [
     "EmbeddingResult",
     "FileMetadata",
     "GitLabProject",
+    "IndexJobRecord",
     "IndexJobResult",
     "JobStatus",
     "PermissionRecord",

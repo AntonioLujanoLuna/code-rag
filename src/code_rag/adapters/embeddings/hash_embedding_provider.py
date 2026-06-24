@@ -26,6 +26,12 @@ class HashEmbeddingProvider:
     def embed_query(self, text: str) -> EmbeddingResult:
         return self._embed_result(text)
 
+    async def aembed_documents(self, texts: list[str]) -> list[EmbeddingResult]:
+        return self.embed_documents(texts)
+
+    async def aembed_query(self, text: str) -> EmbeddingResult:
+        return self.embed_query(text)
+
     def _embed_result(self, text: str) -> EmbeddingResult:
         tokens = re.findall(r"[A-Za-z_][A-Za-z0-9_]*|[0-9]+", text.lower())
         dense = self._embed_tokens(tokens, self.dimension)

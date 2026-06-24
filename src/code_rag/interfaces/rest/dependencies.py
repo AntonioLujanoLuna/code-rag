@@ -6,6 +6,7 @@ from code_rag.adapters.answer.anthropic_answer_provider import AnthropicAnswerPr
 from code_rag.adapters.answer.extractive_answer_provider import ExtractiveAnswerProvider
 from code_rag.adapters.elasticsearch.index import ElasticsearchCodeIndex
 from code_rag.adapters.elasticsearch.permission_store import ElasticsearchPermissionStore
+from code_rag.adapters.embeddings.fastembed_embedding_provider import FastEmbedEmbeddingProvider
 from code_rag.adapters.embeddings.http_embedding_provider import (
     HttpLateInteractionEmbeddingProvider,
 )
@@ -26,6 +27,7 @@ from code_rag.apps.retrieval.retrieval_service import RetrievalService
 from code_rag.apps.secrets.secret_scanner import SecretScanner
 from code_rag.config.settings import get_settings
 from code_rag.ports.answer import AnswerProvider
+from code_rag.ports.embedding import EmbeddingProvider
 from code_rag.ports.job_store import JobStorePort
 
 
@@ -40,8 +42,11 @@ def get_job_store() -> JobStorePort:
 
 
 @lru_cache
-def get_embeddings() -> HttpLateInteractionEmbeddingProvider:
-    return HttpLateInteractionEmbeddingProvider(get_settings())
+def get_embeddings() -> EmbeddingProvider:
+    settings = get_settings()
+    if settings.embedding_backend == "fastembed":
+        return FastEmbedEmbeddingProvider(settings)
+    return HttpLateInteractionEmbeddingProvider(settings)
 
 
 @lru_cache
@@ -98,7 +103,12 @@ def get_authenticator() -> Authenticator:
 @lru_cache
 def get_job_queue() -> IndexJobQueue:
     settings = get_settings()
-    return IndexJobQueue(settings.max_index_workers, store=get_index())
+    return IndexJobQueue(
+        store=get_index(),
+        max_workers=settings.max_index_workers,
+        poll_interval_seconds=settings.index_job_poll_interval_seconds,
+        lock_ttl_seconds=settings.index_job_lock_ttl_seconds,
+    )
 
 
 @lru_cache
@@ -146,5 +156,6 @@ def get_retrieval_service() -> RetrievalService:
         index=get_index(),
         embeddings=get_embeddings(),
         permissions=get_permission_service(),
+        metrics=get_metrics(),
         reranker=Reranker(settings, cross_encoder=get_cross_encoder()),
     )

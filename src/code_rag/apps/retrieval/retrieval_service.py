@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 from concurrent.futures import ThreadPoolExecutor
+from threading import RLock
 
+from code_rag.apps.metrics.metrics_registry import MetricsRegistry
 from code_rag.apps.permissions.permission_service import PermissionService
 from code_rag.apps.retrieval.graph_expander import GraphExpander
 from code_rag.apps.retrieval.hyde_expander import HydeExpander
@@ -11,7 +14,7 @@ from code_rag.apps.retrieval.query_classifier import QueryClassifier
 from code_rag.apps.retrieval.query_expander import QueryExpander
 from code_rag.apps.retrieval.reranker import Reranker
 from code_rag.config.settings import Settings
-from code_rag.domain.models import SearchHit, SearchRequest, SearchResponse
+from code_rag.domain.models import EmbeddingResult, SearchHit, SearchRequest, SearchResponse
 from code_rag.ports.embedding import EmbeddingProvider
 from code_rag.ports.search import SearchPort
 
@@ -30,6 +33,7 @@ class RetrievalService:
         hyde_expander: HydeExpander | None = None,
         query_expander: QueryExpander | None = None,
         graph_expander: GraphExpander | None = None,
+        metrics: MetricsRegistry | None = None,
     ) -> None:
         self.settings = settings
         self.index = index
@@ -40,8 +44,14 @@ class RetrievalService:
         self.hyde_expander = hyde_expander or HydeExpander(settings)
         self.query_expander = query_expander or QueryExpander(settings)
         self.graph_expander = graph_expander or GraphExpander(settings, index)
+        self.metrics = metrics
+        self._query_embedding_cache: dict[str, tuple[float, EmbeddingResult]] = {}
+        self._cache_lock = RLock()
 
-    def search(self, request: SearchRequest) -> SearchResponse:
+    async def search(self, request: SearchRequest) -> SearchResponse:
+        return await asyncio.to_thread(self.search_sync, request)
+
+    def search_sync(self, request: SearchRequest) -> SearchResponse:
         started = time.perf_counter()
         query_type = self.classifier.classify(request.query)
         identifiers = self.classifier.identifiers(request.query)
@@ -69,15 +79,30 @@ class RetrievalService:
         # by a HyDE snippet), so it is issued once that resolves.
         with ThreadPoolExecutor(max_workers=4, thread_name_prefix="code-rag-search") as pool:
             lexical_future = pool.submit(
-                self.index.lexical_search, expanded_query, filters, request.top_k * 2
+                self._timed_leg,
+                "bm25",
+                self.index.lexical_search,
+                expanded_query,
+                filters,
+                request.top_k * 2,
             )
             symbol_future = pool.submit(
-                self.index.symbol_search, identifiers, filters, request.top_k
+                self._timed_leg,
+                "symbol",
+                self.index.symbol_search,
+                identifiers,
+                filters,
+                request.top_k,
             )
             edge_future = pool.submit(
-                self.index.edge_search, identifiers, filters, request.top_k * 2
+                self._timed_leg,
+                "edge",
+                self.index.edge_search,
+                identifiers,
+                filters,
+                request.top_k * 2,
             )
-            embedding_future = pool.submit(self.embeddings.embed_query, request.query)
+            embedding_future = pool.submit(self._cached_query_embedding, request.query)
             query_embedding = embedding_future.result()
             if self.settings.hyde_enabled:
                 hyde_snippet = self.hyde_expander.expand(request.query)
@@ -86,7 +111,12 @@ class RetrievalService:
                         f"{request.query}\n{hyde_snippet}"
                     )
             vector_future = pool.submit(
-                self.index.vector_search, query_embedding.dense, filters, request.top_k * 2
+                self._timed_leg,
+                "knn",
+                self.index.vector_search,
+                query_embedding.dense,
+                filters,
+                request.top_k * 2,
             )
             community_future = (
                 pool.submit(
@@ -121,6 +151,8 @@ class RetrievalService:
             request.query,
         )[: request.top_k]
         duration = time.perf_counter() - started
+        if self.metrics:
+            self.metrics.observe("retrieval_request_duration_seconds", duration)
         logger.info(
             "Search completed",
             extra={
@@ -138,6 +170,41 @@ class RetrievalService:
             hits=hits,
             context=self._context(hits),
         )
+
+    def _cached_query_embedding(self, query: str) -> EmbeddingResult:
+        now = time.monotonic()
+        ttl = self.settings.query_embedding_cache_ttl_seconds
+        if ttl > 0:
+            with self._cache_lock:
+                cached = self._query_embedding_cache.get(query)
+                if cached and cached[0] > now:
+                    if self.metrics:
+                        self.metrics.increment("retrieval_query_embedding_cache_hits_total")
+                    return cached[1]
+        started = time.perf_counter()
+        result = self.embeddings.embed_query(query)
+        if ttl > 0:
+            with self._cache_lock:
+                self._query_embedding_cache[query] = (now + ttl, result)
+        if self.metrics:
+            self.metrics.increment("retrieval_query_embedding_cache_misses_total")
+            self.metrics.observe(
+                "retrieval_leg_duration_seconds",
+                time.perf_counter() - started,
+                {"leg": "embedding"},
+            )
+        return result
+
+    def _timed_leg(self, leg: str, func, *args) -> list[SearchHit]:
+        started = time.perf_counter()
+        result = func(*args)
+        if self.metrics:
+            self.metrics.observe(
+                "retrieval_leg_duration_seconds",
+                time.perf_counter() - started,
+                {"leg": leg},
+            )
+        return result
 
     def _community_search(
         self, query: str, vector: list[float], filters: dict, size: int

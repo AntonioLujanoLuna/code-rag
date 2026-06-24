@@ -221,9 +221,13 @@ def job_status_mapping() -> dict:
                 "job_id": {"type": "keyword"},
                 "job_type": {"type": "keyword"},
                 "status": {"type": "keyword"},
+                "payload": {"type": "object", "enabled": False},
                 "submitted_at": {"type": "date"},
                 "started_at": {"type": "date"},
                 "finished_at": {"type": "date"},
+                "locked_by": {"type": "keyword"},
+                "lock_expires_at": {"type": "date"},
+                "attempts": {"type": "integer"},
             },
         },
     }

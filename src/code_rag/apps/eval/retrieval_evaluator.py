@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import math
+from inspect import isawaitable
 from pathlib import Path
 
 from code_rag.apps.eval.eval_case import EvalCase, EvalDataset
@@ -26,9 +28,12 @@ class RetrievalEvaluator:
         return EvalDataset.model_validate(json.loads(path.read_text(encoding="utf-8")))
 
     def evaluate(self, dataset: EvalDataset) -> dict:
+        return asyncio.run(self.aevaluate(dataset))
+
+    async def aevaluate(self, dataset: EvalDataset) -> dict:
         per_case: list[dict] = []
         for case in dataset.cases:
-            response = self.service.search(
+            result = self.service.search(
                 SearchRequest(
                     query=case.query,
                     user_id=case.user_id,
@@ -38,6 +43,7 @@ class RetrievalEvaluator:
                     top_k=self.k,
                 )
             )
+            response = await result if isawaitable(result) else result
             per_case.append(self._score_case(case, response.hits))
         return {
             "k": self.k,

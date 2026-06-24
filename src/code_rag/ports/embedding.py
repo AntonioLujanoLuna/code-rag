@@ -18,3 +18,9 @@ class EmbeddingProvider(Protocol):
 
     def embed_query(self, text: str) -> EmbeddingResult:
         """Return dense and late-interaction embeddings for a query."""
+
+    async def aembed_documents(self, texts: list[str]) -> list[EmbeddingResult]:
+        """Return dense and late-interaction embeddings for documents asynchronously."""
+
+    async def aembed_query(self, text: str) -> EmbeddingResult:
+        """Return dense and late-interaction embeddings for a query asynchronously."""

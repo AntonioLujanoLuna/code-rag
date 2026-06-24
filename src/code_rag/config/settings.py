@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from functools import lru_cache
 from pathlib import Path
+from typing import Literal
 
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -31,6 +32,8 @@ class Settings(BaseSettings):
     embedding_service_url: str = ""
     embedding_service_timeout_seconds: float = 30.0
     late_interaction_dimension: int = 128
+    embedding_backend: Literal["auto", "hash", "http", "fastembed"] = "auto"
+    fastembed_model: str = "BAAI/bge-small-en-v1.5"
 
     llm_answer_service_url: str = ""
     llm_answer_service_timeout_seconds: float = 60.0
@@ -58,6 +61,8 @@ class Settings(BaseSettings):
     max_chunk_chars: int = 7_000
     min_chunk_chars: int = 300
     max_index_workers: int = 2
+    index_job_poll_interval_seconds: float = 0.5
+    index_job_lock_ttl_seconds: float = 900.0
     # Parallelism for processing files within a single indexing job.
     index_file_workers: int = 4
     # Cap on how many references/calls a single chunk records, to bound index size.
@@ -76,7 +81,11 @@ class Settings(BaseSettings):
     # runs in development mode: no key is required and request-supplied user_ids
     # are trusted. When populated, every protected endpoint requires a valid
     # ``X-API-Key`` header and the resolved identity overrides request bodies.
-    api_keys: dict[str, str] = Field(default_factory=dict)
+    api_keys: dict[str, str] | list[dict[str, str]] = Field(default_factory=dict)
+    admin_api_keys: list[dict[str, str]] = Field(default_factory=list)
+    api_key_users: dict[str, list[dict[str, str]]] = Field(default_factory=dict)
+    query_embedding_cache_ttl_seconds: float = 300.0
+    permission_cache_ttl_seconds: float = 60.0
 
     # Retrieval rerank weights (made configurable instead of magic numbers).
     rerank_identifier_boost: float = 0.15

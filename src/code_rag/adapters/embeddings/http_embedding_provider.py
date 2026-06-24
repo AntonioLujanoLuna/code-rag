@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import httpx
@@ -45,6 +46,12 @@ class HttpLateInteractionEmbeddingProvider:
         if not self.settings.embedding_service_url:
             return self.fallback.embed_query(text)
         return self._embed_batch([text], "query")[0]
+
+    async def aembed_documents(self, texts: list[str]) -> list[EmbeddingResult]:
+        return await asyncio.to_thread(self.embed_documents, texts)
+
+    async def aembed_query(self, text: str) -> EmbeddingResult:
+        return await asyncio.to_thread(self.embed_query, text)
 
     def _parallel_embed(self, texts: list[str], batch_size: int) -> list[EmbeddingResult]:
         batches = [texts[i : i + batch_size] for i in range(0, len(texts), batch_size)]

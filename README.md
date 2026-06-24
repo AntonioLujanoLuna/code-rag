@@ -28,7 +28,8 @@ reranking.
   - `code_repos_v1`
   - `code_index_jobs_v1`
 - Bulk indexing and delete-by-file replacement.
-- Async indexing job queue for full and incremental indexing.
+- Durable Elasticsearch-backed indexing job queue for full and incremental
+  indexing across API restarts and multiple workers.
 - Incremental indexing from GitLab push webhooks or CLI `old_sha -> new_sha`,
   including stale deletion for removed or newly unindexable files.
 - Query classification, identifier extraction, BM25 + kNN retrieval, symbol
@@ -50,6 +51,7 @@ reranking.
 - Secret scanning and redaction before embedding/indexing.
 - Repo metadata enrichment for ownership, domain, and deployment context.
 - Grounded answer endpoint with mandatory source citations and refusal gates.
+- Prometheus-format `/metrics` endpoint with retrieval-leg histograms.
 
 ## Quick start
 
@@ -96,9 +98,14 @@ Important defaults:
 - `CODE_RAG_BRANCH=develop`
 - `CODE_RAG_TENANT_ID=default`
 - `CODE_RAG_EMBEDDING_DIMENSION=384`
+- `CODE_RAG_EMBEDDING_BACKEND=auto`
 - `CODE_RAG_LATE_INTERACTION_DIMENSION=128`
 - `CODE_RAG_MAX_INDEX_WORKERS=2`
+- `CODE_RAG_INDEX_JOB_POLL_INTERVAL_SECONDS=0.5`
+- `CODE_RAG_INDEX_JOB_LOCK_TTL_SECONDS=900`
 - `CODE_RAG_ALLOW_REQUEST_SUPPLIED_PERMISSIONS=false`
+- `CODE_RAG_QUERY_EMBEDDING_CACHE_TTL_SECONDS=300`
+- `CODE_RAG_PERMISSION_CACHE_TTL_SECONDS=60`
 - `CODE_RAG_SECRET_SCANNING_ENABLED=true`
 - `CODE_RAG_SKIP_CHUNKS_WITH_HIGH_CONFIDENCE_SECRETS=false`
 - `CODE_RAG_MIN_ANSWER_SOURCES=1`
@@ -148,6 +155,25 @@ an optional `dense`/`embedding`. If no dense vector is returned, the adapter
 mean-pools the late-interaction vectors for Elasticsearch kNN. Unchanged chunks
 reuse their previously stored embeddings (keyed by an input-content hash) so
 re-indexing avoids redundant embedding calls.
+
+For a real local semantic embedding backend, install
+`pip install -e ".[local-embeddings]"` and set
+`CODE_RAG_EMBEDDING_BACKEND=fastembed`. The hash backend remains the default
+zero-dependency fallback for development and tests.
+
+If `CODE_RAG_API_KEYS`, `CODE_RAG_API_KEY_USERS`, or
+`CODE_RAG_ADMIN_API_KEYS` is configured, API routes require `X-API-Key`. Store
+SHA-256 hashes, not plaintext keys:
+
+```json
+{"alice":[{"sha256":"<sha256-hex>","expires_at":"2027-01-01T00:00:00Z"}]}
+```
+
+Admin keys use either an object or list shape:
+
+```json
+[{"id":"ops","sha256":"<sha256-hex>"}]
+```
 
 Repo metadata can be provided with `CODE_RAG_REPO_METADATA_PATH` pointing to a
 JSON or TOML file. JSON shape:
@@ -231,6 +257,10 @@ returns a queued `job_id`. Poll it with:
 ```http
 GET /jobs/{job_id}
 ```
+
+Jobs are stored in Elasticsearch with their payloads. Any API worker can claim
+queued jobs, and abandoned running jobs are claimable again after
+`CODE_RAG_INDEX_JOB_LOCK_TTL_SECONDS`.
 
 GitLab push webhook:
 
@@ -330,10 +360,21 @@ nDCG@k, and hit-rate so retrieval changes can be measured rather than eyeballed.
 
 ## Production notes
 
+`/metrics` returns Prometheus exposition format by default. Send
+`Accept: application/json` for the legacy JSON snapshot.
+
 The default embedding backend is deterministic and local so the system is
 runnable immediately. In production, configure `CODE_RAG_EMBEDDING_SERVICE_URL`
-to call your embedding service and store late-interaction vectors alongside the
-dense vector used by Elasticsearch kNN.
+or `CODE_RAG_EMBEDDING_BACKEND=fastembed` and store late-interaction vectors
+alongside the dense vector used by Elasticsearch kNN.
+
+Run retrieval-quality gates with:
+
+```powershell
+code-rag evaluate tests/fixtures/retrieval_golden.json --allowed-project-id 123 --min-recall 1.0
+```
+
+CI runs the evaluator against a seeded Elasticsearch service container.
 
 The first version stores only active snapshots. Historical snapshots can be
 added by changing replacement semantics from delete-and-insert to

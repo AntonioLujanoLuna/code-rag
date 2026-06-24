@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import pytest
+
 from code_rag.adapters.embeddings.hash_embedding_provider import HashEmbeddingProvider
 from code_rag.apps.retrieval.query_classifier import QueryClassifier
 from code_rag.apps.retrieval.retrieval_service import RetrievalService
@@ -56,11 +58,12 @@ def test_query_classifier_detects_definition_lookup() -> None:
     assert classifier.identifiers("Where is PaymentService implemented?") == ["PaymentService"]
 
 
-def test_retrieval_applies_permission_filters_and_boosts_definitions() -> None:
+@pytest.mark.asyncio
+async def test_retrieval_applies_permission_filters_and_boosts_definitions() -> None:
     index = FakeIndex()
     service = RetrievalService(Settings(), index, HashEmbeddingProvider(16))
 
-    response = service.search(
+    response = await service.search(
         SearchRequest(query="Where is PaymentService implemented?", allowed_project_ids=["123"])
     )
 
@@ -71,11 +74,12 @@ def test_retrieval_applies_permission_filters_and_boosts_definitions() -> None:
     assert "Source:" in response.context
 
 
-def test_retrieval_includes_graph_expanded_neighbors() -> None:
+@pytest.mark.asyncio
+async def test_retrieval_includes_graph_expanded_neighbors() -> None:
     index = FakeIndex()
     service = RetrievalService(Settings(), index, HashEmbeddingProvider(16))
 
-    response = service.search(
+    response = await service.search(
         SearchRequest(query="Where is PaymentService implemented?", allowed_project_ids=["123"])
     )
 
@@ -85,13 +89,14 @@ def test_retrieval_includes_graph_expanded_neighbors() -> None:
     assert neighbor.metadata["graph_expanded"] is True
 
 
-def test_graph_expansion_can_be_disabled() -> None:
+@pytest.mark.asyncio
+async def test_graph_expansion_can_be_disabled() -> None:
     index = FakeIndex()
     service = RetrievalService(
         Settings(graph_expansion_enabled=False), index, HashEmbeddingProvider(16)
     )
 
-    response = service.search(
+    response = await service.search(
         SearchRequest(query="Where is PaymentService implemented?", allowed_project_ids=["123"])
     )
 

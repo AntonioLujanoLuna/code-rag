@@ -7,10 +7,11 @@ RUN apt-get update \
 
 WORKDIR /app
 
-COPY pyproject.toml README.md ./
+COPY pyproject.toml uv.lock README.md ./
 COPY src ./src
 
-RUN pip install --no-cache-dir .
+RUN pip install --no-cache-dir uv \
+    && uv sync --frozen --no-dev
 
 # Run as an unprivileged user. Create after install so site-packages stay
 # root-owned (read-only to the runtime user).
@@ -23,4 +24,4 @@ EXPOSE 8000
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
     CMD curl -fsS http://localhost:8000/health || exit 1
 
-CMD ["uvicorn", "code_rag.interfaces.rest.main:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD [".venv/bin/uvicorn", "code_rag.interfaces.rest.main:app", "--host", "0.0.0.0", "--port", "8000"]

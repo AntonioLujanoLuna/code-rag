@@ -1,19 +1,71 @@
 from __future__ import annotations
 
 from code_rag.apps.jobs.index_job_queue import IndexJobQueue
-from code_rag.domain.models import IndexJobResult, JobStatus
+from code_rag.domain.models import IndexJobRecord, IndexJobResult, JobStatus
 from code_rag.domain.time import utcnow
 
 
 class RecordingJobStore:
     def __init__(self) -> None:
-        self.statuses: dict[str, JobStatus] = {}
+        self.records: dict[str, IndexJobRecord] = {}
 
-    def record_job_status(self, status: JobStatus) -> None:
-        self.statuses[status.job_id] = status
+    def enqueue_job(self, record: IndexJobRecord) -> JobStatus:
+        self.records[record.job_id] = record
+        return self._status(record)
 
     def get_job_status(self, job_id: str) -> JobStatus | None:
-        return self.statuses.get(job_id)
+        record = self.records.get(job_id)
+        return self._status(record) if record else None
+
+    def claim_next_job(self, worker_id: str, lock_ttl_seconds: float) -> IndexJobRecord | None:
+        for record in self.records.values():
+            if record.status == "queued":
+                claimed = record.model_copy(
+                    update={"status": "running", "locked_by": worker_id, "started_at": utcnow()}
+                )
+                self.records[record.job_id] = claimed
+                return claimed
+        return None
+
+    def finish_job(self, job_id: str, result: IndexJobResult) -> JobStatus:
+        record = self.records[job_id].model_copy(
+            update={
+                "status": result.status,
+                "finished_at": result.finished_at,
+                "result": result,
+            }
+        )
+        self.records[job_id] = record
+        return self._status(record)
+
+    def fail_job(self, job_id: str, error_message: str) -> JobStatus:
+        record = self.records[job_id].model_copy(
+            update={"status": "failed", "finished_at": utcnow(), "error_message": error_message}
+        )
+        self.records[job_id] = record
+        return self._status(record)
+
+    def record_job(self, job: IndexJobResult) -> None:
+        pass
+
+    def get_job(self, job_id: str) -> IndexJobResult | None:
+        record = self.records.get(job_id)
+        return record.result if record else None
+
+    def record_job_status(self, status: JobStatus) -> None:
+        self.records[status.job_id] = IndexJobRecord(**status.model_dump())
+
+    def _status(self, record: IndexJobRecord) -> JobStatus:
+        return JobStatus(
+            job_id=record.job_id,
+            job_type=record.job_type,
+            status=record.status,
+            submitted_at=record.submitted_at,
+            started_at=record.started_at,
+            finished_at=record.finished_at,
+            result=record.result,
+            error_message=record.error_message,
+        )
 
 
 def _result(job_id: str) -> IndexJobResult:
@@ -31,51 +83,25 @@ def _result(job_id: str) -> IndexJobResult:
     )
 
 
-def test_queue_persists_status_transitions_and_falls_back_to_store() -> None:
+def test_queue_persists_payload_and_reads_from_store() -> None:
     store = RecordingJobStore()
-    queue = IndexJobQueue(max_workers=1, store=store)
+    queue = IndexJobQueue(store=store, max_workers=1)
 
-    status = queue.submit("job-1", "full_repo_index", lambda: _result("job-1"))
-    assert status.status in {"queued", "running", "succeeded"}
-    queue.executor.shutdown(wait=True)
+    status = queue.submit("job-1", "full_repo_index", {"project": {"gitlab_project_id": "123"}})
 
-    # The store captured at least the terminal status.
-    assert store.get_job_status("job-1") is not None
-    assert store.get_job_status("job-1").status == "succeeded"
-
-    # A fresh queue (simulating another worker) resolves via the store.
-    other = IndexJobQueue(max_workers=1, store=store)
-    resolved = other.get("job-1")
-    assert resolved is not None and resolved.status == "succeeded"
+    assert status.status == "queued"
+    assert queue.get("job-1").status == "queued"
+    assert store.records["job-1"].payload["project"]["gitlab_project_id"] == "123"
 
 
-def test_in_memory_finished_jobs_are_evicted_when_bounded() -> None:
-    queue = IndexJobQueue(max_workers=1, max_tracked_jobs=2)
-    queue.executor.shutdown(wait=True)
-    for i in range(5):
-        queue._remember(
-            JobStatus(
-                job_id=f"job-{i}",
-                job_type="full_repo_index",
-                status="succeeded",
-                submitted_at=utcnow(),
-            )
-        )
+def test_queue_claims_and_finishes_job() -> None:
+    store = RecordingJobStore()
+    queue = IndexJobQueue(store=store, max_workers=1)
+    queue.submit("job-1", "full_repo_index", {"project": {"gitlab_project_id": "123"}})
 
-    # Completed jobs beyond the bound are evicted (LRU).
-    assert len(queue._jobs) == 2
-    assert "job-4" in queue._jobs and "job-3" in queue._jobs
+    record = store.claim_next_job(queue.worker_id, queue.lock_ttl_seconds)
+    assert record is not None and record.status == "running"
+    finished = store.finish_job("job-1", _result("job-1"))
 
-
-def test_running_jobs_are_not_evicted() -> None:
-    queue = IndexJobQueue(max_workers=1, max_tracked_jobs=1)
-    queue.executor.shutdown(wait=True)
-    queue._remember(
-        JobStatus(job_id="running", job_type="t", status="running", submitted_at=utcnow())
-    )
-    queue._remember(
-        JobStatus(job_id="queued", job_type="t", status="queued", submitted_at=utcnow())
-    )
-
-    # Neither in-flight job is evicted even though the bound is exceeded.
-    assert "running" in queue._jobs and "queued" in queue._jobs
+    assert finished.status == "succeeded"
+    assert queue.get("job-1").result is not None

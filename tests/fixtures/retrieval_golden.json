@@ -1,0 +1,9 @@
+{
+  "cases": [
+    {
+      "query": "Where is PaymentService implemented?",
+      "allowed_project_ids": ["123"],
+      "relevant": ["eval-payment-service"]
+    }
+  ]
+}

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 from pathlib import Path
 
@@ -86,14 +87,16 @@ def search(
     repo_path_with_namespace: str | None = typer.Option(None),
     top_k: int = typer.Option(8, min=1, max=50),
 ) -> None:
-    result = get_retrieval_service().search(
-        SearchRequest(
-            query=query,
-            user_id=user_id,
-            allowed_project_ids=allowed_project_id or [],
-            branch=branch,
-            repo_path_with_namespace=repo_path_with_namespace,
-            top_k=top_k,
+    result = asyncio.run(
+        get_retrieval_service().search(
+            SearchRequest(
+                query=query,
+                user_id=user_id,
+                allowed_project_ids=allowed_project_id or [],
+                branch=branch,
+                repo_path_with_namespace=repo_path_with_namespace,
+                top_k=top_k,
+            )
         )
     )
     typer.echo(json.dumps(result.model_dump(mode="json"), indent=2))
@@ -107,13 +110,15 @@ def answer(
     branch: str | None = typer.Option(None),
     top_k: int = typer.Option(8, min=1, max=50),
 ) -> None:
-    search_result = get_retrieval_service().search(
-        SearchRequest(
-            query=query,
-            user_id=user_id,
-            allowed_project_ids=allowed_project_id or [],
-            branch=branch,
-            top_k=top_k,
+    search_result = asyncio.run(
+        get_retrieval_service().search(
+            SearchRequest(
+                query=query,
+                user_id=user_id,
+                allowed_project_ids=allowed_project_id or [],
+                branch=branch,
+                top_k=top_k,
+            )
         )
     )
     answer_text = get_answer_provider().answer(search_result, 12_000)
@@ -122,13 +127,23 @@ def answer(
 
 @app.command("evaluate")
 def evaluate(
-    dataset: str = typer.Option(..., help="Path to a golden retrieval dataset JSON file."),
+    dataset: Path = typer.Argument(..., help="Path to a golden retrieval dataset JSON file."),
     k: int = typer.Option(10, min=1, max=100, help="Cutoff for recall@k / nDCG@k."),
+    min_recall: float = typer.Option(0.0, min=0.0, max=1.0),
+    min_mrr: float = typer.Option(0.0, min=0.0, max=1.0),
+    min_ndcg: float = typer.Option(0.0, min=0.0, max=1.0),
 ) -> None:
     evaluator = RetrievalEvaluator(get_retrieval_service(), k=k)
-    data = evaluator.load(Path(dataset))
-    report = evaluator.evaluate(data)
+    data = evaluator.load(dataset)
+    report = asyncio.run(evaluator.aevaluate(data))
     typer.echo(json.dumps(report, indent=2))
+    aggregate = report["aggregate"]
+    failed = (
+        aggregate["recall_at_k"] < min_recall
+        or aggregate["mrr"] < min_mrr
+        or aggregate["ndcg_at_k"] < min_ndcg
+    )
+    raise typer.Exit(1 if failed else 0)
 
 
 @app.command("rebuild-communities")
