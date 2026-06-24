@@ -73,8 +73,9 @@ mypy_path = "src"
 # Newer numpy ships stubs that use the 3.12 `type` statement, which mypy rejects
 # when targeting 3.11. We only use numpy at runtime, so skip analysing its stubs.
 [[tool.mypy.overrides]]
-module = "numpy.*"
+module = ["numpy", "numpy.*"]
 follow_imports = "skip"
+follow_imports_for_stubs = true
 
 [tool.pytest.ini_options]
 # Include the repo root so tests can `import tests.conftest` under a bare
