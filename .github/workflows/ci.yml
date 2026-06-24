@@ -17,7 +17,7 @@ jobs:
       matrix:
         python-version: ["3.11", "3.12"]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
@@ -38,7 +38,7 @@ jobs:
   test-minimal:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
@@ -53,7 +53,7 @@ jobs:
   docker:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Build image
         run: docker build -t code-rag:ci .
 
@@ -79,7 +79,7 @@ jobs:
       CODE_RAG_ALLOW_REQUEST_SUPPLIED_PERMISSIONS: "true"
       CODE_RAG_INDEX_PREFIX: ci-${{ github.run_id }}-
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
