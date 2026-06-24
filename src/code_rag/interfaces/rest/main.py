@@ -5,8 +5,13 @@ import time
 
 from fastapi import FastAPI, Request
 
+from code_rag.config.logging import configure_logging
+from code_rag.config.settings import get_settings
 from code_rag.interfaces.rest.dependencies import get_metrics
 from code_rag.interfaces.rest.routers import ROUTERS
+
+_settings = get_settings()
+configure_logging(_settings.log_level, _settings.log_format)
 
 app = FastAPI(title="GitLab Code RAG", version="0.1.0")
 logger = logging.getLogger(__name__)

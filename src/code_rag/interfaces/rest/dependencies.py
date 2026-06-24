@@ -19,6 +19,7 @@ from code_rag.apps.jobs.index_job_queue import IndexJobQueue
 from code_rag.apps.metadata.repo_metadata_provider import RepoMetadataProvider
 from code_rag.apps.metrics.metrics_registry import MetricsRegistry
 from code_rag.apps.permissions.permission_service import PermissionService
+from code_rag.apps.ratelimit.rate_limiter import SlidingWindowRateLimiter
 from code_rag.apps.retrieval.retrieval_service import RetrievalService
 from code_rag.apps.secrets.secret_scanner import SecretScanner
 from code_rag.config.settings import get_settings
@@ -109,6 +110,11 @@ def get_answer_provider() -> AnswerProvider:
 @lru_cache
 def get_metrics() -> MetricsRegistry:
     return MetricsRegistry()
+
+
+@lru_cache
+def get_rate_limiter() -> SlidingWindowRateLimiter:
+    return SlidingWindowRateLimiter(get_settings().rate_limit_requests_per_minute)
 
 
 def get_indexing_service() -> IndexingService:

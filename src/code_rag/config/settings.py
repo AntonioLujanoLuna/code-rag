@@ -13,6 +13,14 @@ class Settings(BaseSettings):
     tenant_id: str = "default"
     branch: str = "develop"
 
+    # Observability. ``log_format`` is "json" (structured, for production log
+    # aggregators) or "text" (human-readable, for local development).
+    log_level: str = "INFO"
+    log_format: str = "json"
+
+    # Per-identity rate limiting for /search and /answer. 0 disables it.
+    rate_limit_requests_per_minute: int = 0
+
     gitlab_base_url: str = "https://gitlab.com"
     gitlab_token: str = ""
     gitlab_webhook_secret: str = ""

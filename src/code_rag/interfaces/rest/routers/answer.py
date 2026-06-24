@@ -16,7 +16,7 @@ from code_rag.interfaces.rest.dependencies import (
     get_authenticator,
     get_retrieval_service,
 )
-from code_rag.interfaces.rest.security import require_auth
+from code_rag.interfaces.rest.security import enforce_rate_limit
 from code_rag.ports.answer import AnswerProvider
 
 router = APIRouter()
@@ -25,7 +25,7 @@ router = APIRouter()
 @router.post("/answer", response_model=AnswerResponse)
 def answer(
     request: AnswerRequest,
-    context: AuthContext = Depends(require_auth),
+    context: AuthContext = Depends(enforce_rate_limit),
     authenticator: Authenticator = Depends(get_authenticator),
     retrieval: RetrievalService = Depends(get_retrieval_service),
     answer_provider: AnswerProvider = Depends(get_answer_provider),

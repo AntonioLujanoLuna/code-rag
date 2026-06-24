@@ -4,14 +4,23 @@ on:
   push:
   pull_request:
 
+# Cancel superseded runs on the same ref to save CI minutes.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   test:
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12"]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
+          python-version: ${{ matrix.python-version }}
           cache: pip
       - name: Install dependencies
         run: python -m pip install -e ".[dev]"
@@ -23,3 +32,27 @@ jobs:
         run: mypy src
       - name: Test
         run: pytest -q --cov=code_rag --cov-report=term-missing
+
+  # Verify the package imports and tests pass without the optional tree-sitter
+  # grammars, exercising the regex chunker fallback path.
+  test-minimal:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install without optional extras
+        run: python -m pip install -e . pytest pytest-cov
+      - name: Test (regex chunker fallback)
+        env:
+          CODE_RAG_USE_TREE_SITTER: "false"
+        run: pytest -q
+
+  docker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build image
+        run: docker build -t code-rag:ci .
