@@ -4,6 +4,8 @@ import json
 import logging
 from typing import Any
 
+from code_rag.config.request_context import RequestIdFilter
+
 # Attributes present on every ``logging.LogRecord``. Anything outside this set
 # was passed via ``extra=`` and is treated as structured context.
 _RESERVED_RECORD_ATTRS = frozenset(logging.makeLogRecord({}).__dict__) | {"message", "asctime"}
@@ -42,6 +44,7 @@ def configure_logging(level: str = "INFO", log_format: str = "json") -> None:
         handler.setFormatter(JsonLogFormatter())
     else:
         handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s %(message)s"))
+    handler.addFilter(RequestIdFilter())
 
     root = logging.getLogger()
     for existing in list(root.handlers):

@@ -42,7 +42,9 @@ class HttpCrossEncoderReranker:
                 )
                 response.raise_for_status()
                 data = response.json()
-        except Exception:  # pragma: no cover - network failure path
+        # httpx.HTTPError covers transport/timeout/status failures; ValueError
+        # covers a non-JSON body (json.JSONDecodeError subclasses ValueError).
+        except (httpx.HTTPError, ValueError):  # pragma: no cover - network failure path
             logger.warning("Cross-encoder rerank request failed; falling back", exc_info=True)
             return []
         scores = self._scores(data)
