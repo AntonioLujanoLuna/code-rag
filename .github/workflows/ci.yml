@@ -46,8 +46,11 @@ jobs:
         with:
           python-version: "3.11"
           cache: pip
+        # pytest-asyncio is test tooling (not an optional runtime extra), so it
+        # is installed here too; without it the async tests' marker is unknown
+        # and the warnings-as-errors filter turns that into a collection error.
       - name: Install without optional extras
-        run: python -m pip install -e . pytest pytest-cov
+        run: python -m pip install -e . pytest pytest-cov pytest-asyncio
       - name: Test (regex chunker fallback)
         env:
           CODE_RAG_USE_TREE_SITTER: "false"
