@@ -35,7 +35,7 @@ class HashEmbeddingProvider:
         return EmbeddingResult(dense=dense, late_interaction=late)
 
     def _embed_tokens(self, tokens: list[str], dimension: int) -> list[float]:
-        vector = np.zeros(dimension, dtype=np.float64)
+        vector: np.ndarray = np.zeros(dimension, dtype=np.float64)
         if not tokens:
             return vector.tolist()
         for token in tokens:

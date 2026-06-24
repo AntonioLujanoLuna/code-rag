@@ -95,10 +95,45 @@ def edges_mapping() -> dict:
                 "target_symbol_fqn": {"type": "keyword"},
                 "target_symbol_text": {"type": "text"},
                 "source_repo_project_id": {"type": "keyword"},
+                "source_repo_path_with_namespace": {"type": "keyword"},
                 "source_file_path": {"type": "keyword"},
                 "target_file_path": {"type": "keyword"},
                 "edge_type": {"type": "keyword"},
                 "confidence": {"type": "float"},
+                "indexed_at": {"type": "date"},
+            },
+        },
+    }
+
+
+def communities_mapping(embedding_dimension: int) -> dict:
+    return {
+        "settings": _SETTINGS,
+        "mappings": {
+            "dynamic": True,
+            "properties": {
+                "community_id": {"type": "keyword"},
+                "tenant_id": {"type": "keyword"},
+                "gitlab_project_id": {"type": "keyword"},
+                "repo_path_with_namespace": {"type": "keyword"},
+                "branch": {"type": "keyword"},
+                "commit_sha": {"type": "keyword"},
+                "label": {"type": "text", "fields": {"keyword": {"type": "keyword"}}},
+                "summary": {"type": "text"},
+                "size": {"type": "integer"},
+                "dominant_language": {"type": "keyword"},
+                "member_symbol_fqns": {"type": "keyword"},
+                "member_chunk_ids": {"type": "keyword"},
+                "member_file_paths": {"type": "keyword"},
+                "representative_chunk_id": {"type": "keyword"},
+                "representative_gitlab_url": {"type": "keyword"},
+                "edge_count": {"type": "integer"},
+                "embedding_dense": {
+                    "type": "dense_vector",
+                    "dims": embedding_dimension,
+                    "index": True,
+                    "similarity": "cosine",
+                },
                 "indexed_at": {"type": "date"},
             },
         },

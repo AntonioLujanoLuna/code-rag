@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import logging
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
 from pathlib import Path
 
 from code_rag.apps.chunking.chunk_builder import ChunkBuilder
 from code_rag.apps.classification.file_classifier import FileClassifier
+from code_rag.apps.communities.community_detector import CommunityDetector
 from code_rag.apps.metadata.repo_metadata_provider import RepoMetadataProvider
 from code_rag.config.settings import Settings
 from code_rag.domain.ids import content_hash, stable_id
@@ -15,6 +17,8 @@ from code_rag.ports.embedding import EmbeddingProvider
 from code_rag.ports.repo_store import RepoStorePort
 from code_rag.ports.repository import RepoCachePort
 from code_rag.ports.search import SearchPort
+
+logger = logging.getLogger(__name__)
 
 
 class IndexingService:
@@ -28,6 +32,7 @@ class IndexingService:
         chunk_builder: ChunkBuilder,
         repo_metadata: RepoMetadataProvider | None = None,
         repo_store: RepoStorePort | None = None,
+        community_detector: CommunityDetector | None = None,
     ) -> None:
         self.settings = settings
         self.repo_cache = repo_cache
@@ -38,6 +43,7 @@ class IndexingService:
         self.repo_metadata = repo_metadata
         # The Elasticsearch adapter implements both ports; default to the index.
         self.repo_store: RepoStorePort = repo_store or index  # type: ignore[assignment]
+        self.community_detector = community_detector or CommunityDetector(settings)
 
     def full_index_project(
         self,
@@ -60,6 +66,7 @@ class IndexingService:
             self.index.prune_orphaned_edges(
                 self.settings.tenant_id, project.gitlab_project_id, branch
             )
+            self.rebuild_communities(project, branch, new_sha)
             return job.model_copy(
                 update={
                     **stats,
@@ -145,6 +152,50 @@ class IndexingService:
             return job.model_copy(
                 update={"status": "failed", "finished_at": utcnow(), "error_message": str(exc)}
             )
+
+    def rebuild_communities(self, project: GitLabProject, branch: str, commit_sha: str) -> None:
+        if not self.settings.community_detection_enabled:
+            return
+        read_graph = getattr(self.index, "read_graph", None)
+        index_communities = getattr(self.index, "index_communities", None)
+        delete_communities = getattr(self.index, "delete_project_communities", None)
+        if not (callable(read_graph) and callable(index_communities)):
+            return
+        try:
+            refresh = getattr(self.index, "refresh_search_indices", None)
+            if callable(refresh):
+                refresh()
+            symbols, edges = read_graph(self.settings.tenant_id, project.gitlab_project_id, branch)
+            communities = self.community_detector.detect(
+                project.gitlab_project_id,
+                project.repo_path_with_namespace,
+                branch,
+                commit_sha,
+                symbols,
+                edges,
+            )
+            self._embed_communities(communities)
+            if callable(delete_communities):
+                delete_communities(self.settings.tenant_id, project.gitlab_project_id, branch)
+            index_communities(communities)
+            logger.info(
+                "Rebuilt code communities",
+                extra={
+                    "gitlab_project_id": project.gitlab_project_id,
+                    "branch": branch,
+                    "community_count": len(communities),
+                },
+            )
+        except Exception:
+            # Community detection is an enrichment; never fail indexing over it.
+            logger.warning("Community detection failed; skipping", exc_info=True)
+
+    def _embed_communities(self, communities: list) -> None:
+        if not communities:
+            return
+        results = self.embeddings.embed_documents([c.summary for c in communities])
+        for community, result in zip(communities, results, strict=True):
+            community.embedding_dense = result.dense
 
     def _index_paths(
         self,

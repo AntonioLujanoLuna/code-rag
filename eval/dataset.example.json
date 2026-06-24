@@ -1,0 +1,22 @@
+{
+  "cases": [
+    {
+      "query": "Where is PaymentService implemented?",
+      "relevant": ["app/payments/service.py", "group.payments.PaymentService"],
+      "user_id": "alice",
+      "allowed_project_ids": ["123"]
+    },
+    {
+      "query": "Which tests cover charge refunds?",
+      "relevant": ["tests/test_refunds.py"],
+      "user_id": "alice",
+      "allowed_project_ids": ["123"]
+    },
+    {
+      "query": "What subsystems make up the billing service?",
+      "relevant": ["app/billing/invoice.py", "app/billing/tax.py"],
+      "user_id": "alice",
+      "allowed_project_ids": ["123"]
+    }
+  ]
+}

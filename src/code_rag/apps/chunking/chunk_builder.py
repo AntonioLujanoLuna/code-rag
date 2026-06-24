@@ -586,6 +586,7 @@ class ChunkBuilder:
             source_symbol_id=chunk.chunk_id,
             source_symbol_fqn=source,
             source_repo_project_id=metadata.gitlab_project_id,
+            source_repo_path_with_namespace=metadata.repo_path_with_namespace,
             source_file_path=metadata.file_path,
             source_line_start=chunk.line_start,
             target_symbol_fqn=target,

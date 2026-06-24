@@ -1,8 +1,20 @@
 from __future__ import annotations
 
 import json
+import re
 
 import pytest
+
+# Typer renders --help through Rich, which (when color is forced, as on CI)
+# emits ANSI styling and may wrap long option names across lines on the hyphen
+# (e.g. "--user-\nid"). Strip ANSI and all whitespace before substring checks so
+# the assertions test for the option's presence, not its on-screen layout.
+_ANSI = re.compile(r"\x1b\[[0-9;]*m")
+
+
+def _normalize(text: str) -> str:
+    return re.sub(r"\s+", "", _ANSI.sub("", text))
+
 
 try:
     import importlib
@@ -28,8 +40,9 @@ def _skip_without_typer():
 def test_app_help_lists_commands() -> None:
     result = runner.invoke(cli_app.app, ["--help"])
     assert result.exit_code == 0
+    output = _normalize(result.output)
     for command in ("index-project", "search", "answer", "sync-permissions"):
-        assert command in result.output
+        assert _normalize(command) in output
 
 
 def test_search_help_documents_options() -> None:
@@ -37,8 +50,9 @@ def test_search_help_documents_options() -> None:
     # external service.
     result = runner.invoke(cli_app.app, ["search", "--help"])
     assert result.exit_code == 0
-    assert "--user-id" in result.output
-    assert "--top-k" in result.output
+    output = _normalize(result.output)
+    assert "--user-id" in output
+    assert "--top-k" in output
 
 
 def test_webhook_payload_changes_command(tmp_path) -> None:

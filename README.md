@@ -23,6 +23,7 @@ reranking.
   - `code_chunks_v1`
   - `code_symbols_v1`
   - `code_edges_v1`
+  - `code_communities_v1`
   - `code_files_v1`
   - `code_repos_v1`
   - `code_index_jobs_v1`
@@ -32,6 +33,18 @@ reranking.
   including stale deletion for removed or newly unindexable files.
 - Query classification, identifier extraction, BM25 + kNN retrieval, symbol
   search, graph edge search, RRF fusion, and source-linked context assembly.
+- Graph RAG: after fusion, the strongest hits seed a query-type-aware traversal
+  of the code-edge graph (calls/imports/tests/...) to pull in structurally
+  related definitions — including across repositories, since edge targets are
+  resolved through the symbols index for all allowed projects.
+- Community detection: the symbol/edge graph is clustered per repo at index time
+  (label propagation) and each cluster gets an extractive summary, so global,
+  architecture-level questions ("what subsystems exist?") can retrieve cluster
+  overviews instead of only chunk-level matches.
+- Optional cross-encoder rerank service that re-scores the top fused candidates,
+  blended with the heuristic reranker (which remains the local fallback).
+- Retrieval evaluation harness computing recall@k, precision@k, MRR, nDCG@k and
+  hit-rate against a golden dataset.
 - Permission cache with server-side `user_id -> project_ids` enforcement.
 - Late-interaction embedding adapter with deterministic local fallback.
 - Secret scanning and redaction before embedding/indexing.
@@ -277,6 +290,43 @@ what it uses.
 Tree-sitter grammars are an optional install (`pip install -e ".[tree-sitter]"`);
 each grammar wheel bundles its compiled parser so there is no runtime download.
 Set `CODE_RAG_USE_TREE_SITTER=false` to force the regex chunker.
+
+## Graph RAG, communities, and reranking
+
+Retrieval combines flat legs (BM25, kNN, symbol, edge) with two graph-aware
+stages:
+
+- **Graph expansion.** After RRF fusion, the top
+  `CODE_RAG_GRAPH_EXPANSION_SEED_HITS` hits seed a traversal of the code-edge
+  graph. The edge types followed depend on the classified query type (e.g.
+  `TESTS` edges for test questions, `CALLS`/`REFERENCES` for usage questions),
+  and `CODE_RAG_GRAPH_EXPANSION_HOPS` controls multi-hop depth. Neighbour
+  symbols are resolved to their definition chunks through the symbols index for
+  every allowed project, so neighbours can live in other repositories. Disable
+  with `CODE_RAG_GRAPH_EXPANSION_ENABLED=false`.
+- **Community summaries.** At full-index time the symbol/edge graph is clustered
+  with label propagation and each cluster (≥ `CODE_RAG_COMMUNITY_MIN_SIZE`
+  members) is stored in `code_communities` with an extractive summary and an
+  embedding. A community-search leg surfaces these summaries for global,
+  architecture-level questions. Rebuild them for an already-indexed project with
+  `code-rag rebuild-communities --project-id 123`.
+
+Set `CODE_RAG_RERANK_SERVICE_URL` to post the top fused candidates to a
+cross-encoder rerank service (`{"query", "documents"}` in, a parallel `scores`
+list out). Its scores are min-max normalised and blended into the heuristic
+reranker, which stays the deterministic local fallback when no service is set.
+
+## Evaluation
+
+Measure retrieval quality against a golden dataset of queries and their relevant
+chunk ids / file paths / symbol FQNs (see `eval/dataset.example.json`):
+
+```bash
+code-rag evaluate --dataset eval/dataset.example.json --k 10
+```
+
+The report includes per-case and macro-averaged recall@k, precision@k, MRR,
+nDCG@k, and hit-rate so retrieval changes can be measured rather than eyeballed.
 
 ## Production notes
 
