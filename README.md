@@ -291,6 +291,9 @@ structured JSON (with `extra` context fields preserved) for log aggregators;
 
 ## Project structure
 
+See [ARCHITECTURE.md](ARCHITECTURE.md) for the design rationale, the indexing
+and retrieval pipelines, and the observability/operations model.
+
 The package follows a hexagonal (ports-and-adapters) layout, one class per file:
 
 ```

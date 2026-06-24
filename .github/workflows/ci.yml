@@ -31,7 +31,10 @@ jobs:
       - name: Type check
         run: mypy src
       - name: Test
-        run: pytest -q --cov=code_rag --cov-report=term-missing
+        # Fail the build if coverage regresses below the floor. The ES adapter
+        # is covered by the separate retrieval-eval job, so this gate reflects
+        # the unit suite's reach.
+        run: pytest -q --cov=code_rag --cov-report=term-missing --cov-fail-under=78
 
   # Verify the package imports and tests pass without the optional tree-sitter
   # grammars, exercising the regex chunker fallback path.
