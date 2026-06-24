@@ -20,6 +20,10 @@ All notable changes to this project are documented here. The format is based on
   ref are cancelled.
 - Tests covering the GitLab webhook, indexing service, CLI commands, and the
   health/readiness endpoints.
+- Expanded unit coverage for the permission service/store, query expander and
+  classifier, answer grounding, reranker, HTTP retry helper, extractive answer
+  provider, embedding-response parsing, and the indexing routes. Overall
+  coverage 73% -> 82%.
 
 ### Changed
 - The Docker image runs as a non-root user and declares a `HEALTHCHECK`.
