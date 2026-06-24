@@ -5,6 +5,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 
 from code_rag.apps.permissions.permission_service import PermissionService
+from code_rag.apps.retrieval.graph_expander import GraphExpander
 from code_rag.apps.retrieval.hyde_expander import HydeExpander
 from code_rag.apps.retrieval.query_classifier import QueryClassifier
 from code_rag.apps.retrieval.query_expander import QueryExpander
@@ -28,6 +29,7 @@ class RetrievalService:
         reranker: Reranker | None = None,
         hyde_expander: HydeExpander | None = None,
         query_expander: QueryExpander | None = None,
+        graph_expander: GraphExpander | None = None,
     ) -> None:
         self.settings = settings
         self.index = index
@@ -37,6 +39,7 @@ class RetrievalService:
         self.reranker = reranker or Reranker(settings)
         self.hyde_expander = hyde_expander or HydeExpander(settings)
         self.query_expander = query_expander or QueryExpander(settings)
+        self.graph_expander = graph_expander or GraphExpander(settings, index)
 
     def search(self, request: SearchRequest) -> SearchResponse:
         started = time.perf_counter()
@@ -85,15 +88,37 @@ class RetrievalService:
             vector_future = pool.submit(
                 self.index.vector_search, query_embedding.dense, filters, request.top_k * 2
             )
+            community_future = (
+                pool.submit(
+                    self._community_search,
+                    request.query,
+                    query_embedding.dense,
+                    filters,
+                    self.settings.community_search_size,
+                )
+                if self.settings.community_detection_enabled
+                else None
+            )
             lexical_hits = lexical_future.result()
             symbol_hits = symbol_future.result()
             edge_hits = edge_future.result()
             vector_hits = vector_future.result()
+            community_hits = community_future.result() if community_future else []
+        fused = self._rrf([symbol_hits, edge_hits, lexical_hits, vector_hits])
+        result_sets = [symbol_hits, edge_hits, lexical_hits, vector_hits]
+        if self.settings.graph_expansion_enabled:
+            neighbors = self.graph_expander.expand(fused, query_type, filters)
+            if neighbors:
+                result_sets.append(neighbors)
+        if community_hits:
+            result_sets.append(community_hits)
+        candidates = self._rrf(result_sets)
         hits = self.reranker.rerank(
-            self._rrf([symbol_hits, edge_hits, lexical_hits, vector_hits]),
+            candidates,
             query_type,
             identifiers,
             query_embedding.late_interaction,
+            request.query,
         )[: request.top_k]
         duration = time.perf_counter() - started
         logger.info(
@@ -113,6 +138,18 @@ class RetrievalService:
             hits=hits,
             context=self._context(hits),
         )
+
+    def _community_search(
+        self, query: str, vector: list[float], filters: dict, size: int
+    ) -> list[SearchHit]:
+        search = getattr(self.index, "community_search", None)
+        if not callable(search):
+            return []
+        try:
+            return search(query, vector, filters, size)
+        except Exception:
+            logger.warning("Community search failed; continuing without it", exc_info=True)
+            return []
 
     def _rrf(self, result_sets: list[list[SearchHit]], k: int = 60) -> list[SearchHit]:
         scores: dict[str, float] = {}

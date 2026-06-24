@@ -32,6 +32,20 @@ class FakeIndex:
         edge_hit.metadata["edge_match"] = True
         return [edge_hit]
 
+    def neighbor_chunks(
+        self, symbol_fqns: list[str], edge_types: list[str], filters: dict, size: int
+    ) -> list[SearchHit]:
+        self.filters.append(filters)
+        neighbor = hit("neighbor", 0.0, "neighbor.py", "definition", "ChargeProcessor")
+        neighbor.metadata["graph_expanded"] = True
+        return [neighbor]
+
+    def community_search(
+        self, query: str, vector: list[float], filters: dict, size: int
+    ) -> list[SearchHit]:
+        self.filters.append(filters)
+        return []
+
 
 def test_query_classifier_detects_definition_lookup() -> None:
     classifier = QueryClassifier()
@@ -55,6 +69,33 @@ def test_retrieval_applies_permission_filters_and_boosts_definitions() -> None:
     assert all(filters["allowed_project_ids"] == ["123"] for filters in index.filters)
     assert all(filters["branch"] == "develop" for filters in index.filters)
     assert "Source:" in response.context
+
+
+def test_retrieval_includes_graph_expanded_neighbors() -> None:
+    index = FakeIndex()
+    service = RetrievalService(Settings(), index, HashEmbeddingProvider(16))
+
+    response = service.search(
+        SearchRequest(query="Where is PaymentService implemented?", allowed_project_ids=["123"])
+    )
+
+    chunk_ids = {hit.chunk_id for hit in response.hits}
+    assert "neighbor" in chunk_ids
+    neighbor = next(hit for hit in response.hits if hit.chunk_id == "neighbor")
+    assert neighbor.metadata["graph_expanded"] is True
+
+
+def test_graph_expansion_can_be_disabled() -> None:
+    index = FakeIndex()
+    service = RetrievalService(
+        Settings(graph_expansion_enabled=False), index, HashEmbeddingProvider(16)
+    )
+
+    response = service.search(
+        SearchRequest(query="Where is PaymentService implemented?", allowed_project_ids=["123"])
+    )
+
+    assert "neighbor" not in {hit.chunk_id for hit in response.hits}
 
 
 def hit(

@@ -16,6 +16,7 @@ class CodeEdge(BaseModel):
     source_symbol_id: str | None = None
     source_symbol_fqn: str | None = None
     source_repo_project_id: str
+    source_repo_path_with_namespace: str | None = None
     source_file_path: str
     source_line_start: int
     target_symbol_id: str | None = None

@@ -6,6 +6,7 @@ from pathlib import Path
 import typer
 
 from code_rag.adapters.gitlab.gitlab_client import GitLabClient
+from code_rag.apps.eval.retrieval_evaluator import RetrievalEvaluator
 from code_rag.config.logging import configure_logging
 from code_rag.config.settings import get_settings
 from code_rag.domain.models import ChangedFile, GitLabProject, PermissionRecord, SearchRequest
@@ -117,6 +118,33 @@ def answer(
     )
     answer_text = get_answer_provider().answer(search_result, 12_000)
     typer.echo(answer_text)
+
+
+@app.command("evaluate")
+def evaluate(
+    dataset: str = typer.Option(..., help="Path to a golden retrieval dataset JSON file."),
+    k: int = typer.Option(10, min=1, max=100, help="Cutoff for recall@k / nDCG@k."),
+) -> None:
+    evaluator = RetrievalEvaluator(get_retrieval_service(), k=k)
+    data = evaluator.load(Path(dataset))
+    report = evaluator.evaluate(data)
+    typer.echo(json.dumps(report, indent=2))
+
+
+@app.command("rebuild-communities")
+def rebuild_communities(
+    project_id: str = typer.Option(..., help="GitLab project id."),
+    repo_path_with_namespace: str | None = typer.Option(None),
+    repo_url: str | None = typer.Option(None),
+    repo_name: str | None = typer.Option(None),
+    branch: str | None = typer.Option(None, help="Branch to rebuild communities for."),
+    commit_sha: str = typer.Option("", help="Commit SHA to stamp on communities."),
+) -> None:
+    gitlab = get_gitlab()
+    project = _project(gitlab, project_id, repo_path_with_namespace, repo_url, repo_name)
+    service = get_indexing_service()
+    service.rebuild_communities(project, branch or get_settings().branch, commit_sha)
+    typer.echo("Communities rebuilt.")
 
 
 @app.command("sync-permissions")

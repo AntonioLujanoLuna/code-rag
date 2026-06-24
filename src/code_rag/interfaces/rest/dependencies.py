@@ -11,6 +11,7 @@ from code_rag.adapters.embeddings.http_embedding_provider import (
 )
 from code_rag.adapters.git.git_repo_cache import GitRepoCache
 from code_rag.adapters.gitlab.gitlab_client import GitLabClient
+from code_rag.adapters.rerank.http_cross_encoder_reranker import HttpCrossEncoderReranker
 from code_rag.apps.auth.authenticator import Authenticator
 from code_rag.apps.chunking.chunk_builder import ChunkBuilder
 from code_rag.apps.classification.file_classifier import FileClassifier
@@ -20,6 +21,7 @@ from code_rag.apps.metadata.repo_metadata_provider import RepoMetadataProvider
 from code_rag.apps.metrics.metrics_registry import MetricsRegistry
 from code_rag.apps.permissions.permission_service import PermissionService
 from code_rag.apps.ratelimit.rate_limiter import SlidingWindowRateLimiter
+from code_rag.apps.retrieval.reranker import Reranker
 from code_rag.apps.retrieval.retrieval_service import RetrievalService
 from code_rag.apps.secrets.secret_scanner import SecretScanner
 from code_rag.config.settings import get_settings
@@ -132,6 +134,11 @@ def get_indexing_service() -> IndexingService:
     )
 
 
+@lru_cache
+def get_cross_encoder() -> HttpCrossEncoderReranker:
+    return HttpCrossEncoderReranker(get_settings())
+
+
 def get_retrieval_service() -> RetrievalService:
     settings = get_settings()
     return RetrievalService(
@@ -139,4 +146,5 @@ def get_retrieval_service() -> RetrievalService:
         index=get_index(),
         embeddings=get_embeddings(),
         permissions=get_permission_service(),
+        reranker=Reranker(settings, cross_encoder=get_cross_encoder()),
     )

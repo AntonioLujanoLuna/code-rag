@@ -5,6 +5,7 @@ from code_rag.domain.models.answer_response import AnswerResponse
 from code_rag.domain.models.auth_context import AuthContext
 from code_rag.domain.models.changed_file import ChangedFile
 from code_rag.domain.models.code_chunk import CodeChunk
+from code_rag.domain.models.code_community import CodeCommunity
 from code_rag.domain.models.code_edge import CodeEdge
 from code_rag.domain.models.code_symbol import CodeSymbol
 from code_rag.domain.models.embedding_result import EmbeddingResult
@@ -26,6 +27,7 @@ __all__ = [
     "AuthContext",
     "ChangedFile",
     "CodeChunk",
+    "CodeCommunity",
     "CodeEdge",
     "CodeSymbol",
     "EmbeddingResult",

@@ -12,6 +12,7 @@ from code_rag.adapters.elasticsearch import mappings
 from code_rag.config.settings import Settings
 from code_rag.domain.models import (
     CodeChunk,
+    CodeCommunity,
     CodeEdge,
     CodeSymbol,
     FileMetadata,
@@ -50,6 +51,10 @@ class ElasticsearchCodeIndex:
         return f"{self.settings.index_prefix}code_edges"
 
     @property
+    def communities_index(self) -> str:
+        return f"{self.settings.index_prefix}code_communities"
+
+    @property
     def files_index(self) -> str:
         return f"{self.settings.index_prefix}code_files"
 
@@ -80,6 +85,11 @@ class ElasticsearchCodeIndex:
             self.symbols_index, self._backing(self.symbols_index), mappings.symbols_mapping()
         )
         self._ensure(self.edges_index, self._backing(self.edges_index), mappings.edges_mapping())
+        self._ensure(
+            self.communities_index,
+            self._backing(self.communities_index),
+            mappings.communities_mapping(self.settings.embedding_dimension),
+        )
         self._ensure(self.files_index, self._backing(self.files_index), mappings.files_mapping())
         self._ensure(self.repos_index, self._backing(self.repos_index), mappings.repos_mapping())
         self._ensure(self.jobs_index, self._backing(self.jobs_index), mappings.jobs_mapping())
@@ -92,6 +102,13 @@ class ElasticsearchCodeIndex:
     def ping(self) -> bool:
         """Return True if the Elasticsearch cluster is reachable."""
         return bool(self.client.ping())
+
+    def refresh_search_indices(self) -> None:
+        """Make recent writes visible (chunks/symbols/edges are bulk-indexed
+        with refresh disabled; community detection reads them back)."""
+        self.client.indices.refresh(
+            index=f"{self.chunks_index},{self.symbols_index},{self.edges_index}"
+        )
 
     def swap_alias(self, alias: str, old_backing: str, new_backing: str) -> None:
         """Atomically move an alias from one backing index to another."""
@@ -394,6 +411,171 @@ class ElasticsearchCodeIndex:
             hit.metadata["edge_match"] = True
         return hits
 
+    def neighbor_chunks(
+        self, symbol_fqns: list[str], edge_types: list[str], filters: dict, size: int
+    ) -> list[SearchHit]:
+        if not symbol_fqns or size <= 0:
+            return []
+        should = [
+            {"terms": {"source_symbol_fqn": symbol_fqns}},
+            {"terms": {"target_symbol_fqn": symbol_fqns}},
+        ]
+        edge_filters = self._edge_filters(filters)
+        if edge_types:
+            edge_filters = [*edge_filters, {"terms": {"edge_type": edge_types}}]
+        response = self.client.search(
+            index=self.edges_index,
+            query={
+                "bool": {
+                    "filter": edge_filters,
+                    "should": should,
+                    "minimum_should_match": 1,
+                }
+            },
+            size=max(size * 5, 25),
+        )
+        seeds = set(symbol_fqns)
+        neighbor_fqns: list[str] = []
+        for item in response["hits"]["hits"]:
+            source = item["_source"]
+            for candidate in (source.get("source_symbol_fqn"), source.get("target_symbol_fqn")):
+                if candidate and candidate not in seeds and candidate not in neighbor_fqns:
+                    neighbor_fqns.append(candidate)
+        if not neighbor_fqns:
+            return []
+        # Resolve neighbour FQNs to their definition chunks via the symbols index,
+        # which spans all allowed projects so neighbours can be cross-repository.
+        symbol_response = self.client.search(
+            index=self.symbols_index,
+            query={
+                "bool": {
+                    "filter": self._symbol_filters(filters),
+                    "should": [
+                        {"terms": {"symbol_fqn": neighbor_fqns}},
+                        {"terms": {"symbol_name": [f.rsplit(".", 1)[-1] for f in neighbor_fqns]}},
+                    ],
+                    "minimum_should_match": 1,
+                }
+            },
+            size=max(size * 2, 20),
+        )
+        chunk_ids = [
+            item["_source"]["definition_chunk_id"]
+            for item in symbol_response["hits"]["hits"]
+            if item["_source"].get("definition_chunk_id")
+        ]
+        if not chunk_ids:
+            return []
+        chunk_response = self.client.search(
+            index=self.chunks_index,
+            query=self._chunk_ids_query(chunk_ids, filters),
+            size=len(chunk_ids),
+        )
+        hits = [self._hit(item) for item in chunk_response["hits"]["hits"]][:size]
+        for hit in hits:
+            hit.metadata["graph_expanded"] = True
+        return hits
+
+    def community_search(
+        self, query: str, vector: list[float], filters: dict, size: int
+    ) -> list[SearchHit]:
+        if size <= 0:
+            return []
+        community_filters = self._community_filters(filters)
+        should: list[dict] = [
+            {"multi_match": {"query": query, "fields": ["summary^2", "label^3", "label.keyword"]}}
+        ]
+        if vector:
+            should.append(
+                {
+                    "knn": {
+                        "field": "embedding_dense",
+                        "query_vector": vector,
+                        "num_candidates": max(size * 8, 50),
+                    }
+                }
+            )
+        response = self.client.search(
+            index=self.communities_index,
+            query={
+                "bool": {"filter": community_filters, "should": should, "minimum_should_match": 1}
+            },
+            size=size,
+        )
+        return [self._community_hit(item) for item in response["hits"]["hits"]]
+
+    def read_graph(
+        self, tenant_id: str, project_id: str, branch: str
+    ) -> tuple[list[CodeSymbol], list[CodeEdge]]:
+        symbol_query = {
+            "bool": {
+                "filter": [
+                    {"term": {"tenant_id": tenant_id}},
+                    {"term": {"gitlab_project_id": str(project_id)}},
+                    {"term": {"branch": branch}},
+                ]
+            }
+        }
+        edge_query = {
+            "bool": {
+                "filter": [
+                    {"term": {"tenant_id": tenant_id}},
+                    {"term": {"branch": branch}},
+                    {"term": {"source_repo_project_id": str(project_id)}},
+                ]
+            }
+        }
+        symbols = [
+            CodeSymbol.model_validate(source)
+            for source in self._scan(self.symbols_index, symbol_query)
+        ]
+        edges = [
+            CodeEdge.model_validate(source) for source in self._scan(self.edges_index, edge_query)
+        ]
+        return symbols, edges
+
+    def index_communities(self, communities: list[CodeCommunity]) -> None:
+        if not communities:
+            return
+        if helpers is None:
+            raise RuntimeError("The elasticsearch package is required for bulk indexing")
+        actions = [
+            {
+                "_op_type": "index",
+                "_index": self.communities_index,
+                "_id": community.community_id,
+                "_source": self._dump(community),
+            }
+            for community in communities
+        ]
+        helpers.bulk(self.client, actions, refresh=False)
+
+    def delete_project_communities(self, tenant_id: str, project_id: str, branch: str) -> int:
+        result = self.client.delete_by_query(
+            index=self.communities_index,
+            query={
+                "bool": {
+                    "filter": [
+                        {"term": {"tenant_id": tenant_id}},
+                        {"term": {"gitlab_project_id": str(project_id)}},
+                        {"term": {"branch": branch}},
+                    ]
+                }
+            },
+            conflicts="proceed",
+        )
+        return int(result.get("deleted", 0))
+
+    def _scan(self, index: str, query: dict, batch_size: int = 1_000) -> list[dict]:
+        if helpers is None:
+            raise RuntimeError("The elasticsearch package is required for scanning")
+        return [
+            doc["_source"]
+            for doc in helpers.scan(
+                self.client, index=index, query={"query": query}, size=batch_size
+            )
+        ]
+
     def prune_orphaned_edges(self, tenant_id: str, project_id: str, branch: str) -> int:
         """Delete edges whose source chunk no longer exists in the chunks index."""
         agg_response = self.client.search(
@@ -491,6 +673,21 @@ class ElasticsearchCodeIndex:
             clauses.append({"terms": {"repo_path_with_namespace": repo_paths}})
         return clauses
 
+    def _community_filters(self, filters: dict) -> list[dict]:
+        clauses = [
+            {"term": {"tenant_id": filters["tenant_id"]}},
+            {"term": {"branch": filters["branch"]}},
+            {
+                "terms": {
+                    "gitlab_project_id": [str(item) for item in filters["allowed_project_ids"]]
+                }
+            },
+        ]
+        repo_paths = filters.get("repo_paths_with_namespace")
+        if repo_paths:
+            clauses.append({"terms": {"repo_path_with_namespace": repo_paths}})
+        return clauses
+
     def _chunk_ids_query(self, chunk_ids: list[str], filters: dict) -> dict:
         return {
             "bool": {
@@ -527,6 +724,31 @@ class ElasticsearchCodeIndex:
                 "service_name": source.get("service_name"),
                 "secret_redactions_count": source.get("secret_redactions_count"),
                 "embedding_late_interaction": source.get("embedding_late_interaction"),
+            },
+        )
+
+    def _community_hit(self, item: dict) -> SearchHit:
+        source = item["_source"]
+        return SearchHit(
+            chunk_id=source["community_id"],
+            score=float(item.get("_score") or 0.0),
+            repo_path_with_namespace=source["repo_path_with_namespace"],
+            file_path=(source.get("member_file_paths") or ["<community>"])[0],
+            line_start=0,
+            line_end=0,
+            language=source.get("dominant_language") or "text",
+            chunk_kind="community_summary",
+            symbol_name=source.get("label"),
+            symbol_fqn=None,
+            gitlab_blob_url=source.get("representative_gitlab_url") or "",
+            text=source.get("summary") or "",
+            metadata={
+                "gitlab_project_id": source.get("gitlab_project_id"),
+                "branch": source.get("branch"),
+                "community_size": source.get("size"),
+                "community_label": source.get("label"),
+                "member_file_paths": source.get("member_file_paths"),
+                "is_community": True,
             },
         )
 

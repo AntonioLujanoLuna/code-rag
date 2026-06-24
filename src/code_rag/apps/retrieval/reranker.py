@@ -5,13 +5,21 @@ import numpy as np
 from code_rag.config.settings import Settings
 from code_rag.domain.enums.query_type import QueryType
 from code_rag.domain.models import SearchHit
+from code_rag.ports.rerank import RerankProvider
 
 
 class Reranker:
-    """Heuristic reranker with configurable boosts and numpy MaxSim scoring."""
+    """Heuristic reranker with configurable boosts and numpy MaxSim scoring.
 
-    def __init__(self, settings: Settings) -> None:
+    An optional cross-encoder ``RerankProvider`` re-scores the strongest fused
+    candidates; its scores are min-max normalised and blended into the heuristic
+    score so a real reranker can dominate ordering when one is configured, while
+    the heuristic remains the deterministic local fallback.
+    """
+
+    def __init__(self, settings: Settings, cross_encoder: RerankProvider | None = None) -> None:
         self.settings = settings
+        self.cross_encoder = cross_encoder
 
     def rerank(
         self,
@@ -19,6 +27,7 @@ class Reranker:
         query_type: QueryType,
         identifiers: list[str],
         query_late_embedding: list[list[float]],
+        query: str = "",
     ) -> list[SearchHit]:
         identifier_text = " ".join(identifiers).lower()
         query_matrix = self._matrix(query_late_embedding)
@@ -53,13 +62,34 @@ class Reranker:
                 and hit.metadata.get("symbol_role") == "none"
             ):
                 value += self.settings.rerank_config_boost
+            if hit.metadata.get("graph_expanded"):
+                value += self.settings.rerank_graph_neighbor_boost
+            if hit.chunk_kind == "community_summary":
+                value += self.settings.rerank_community_boost
             late = hit.metadata.get("embedding_late_interaction") or []
             if query_matrix is not None and late:
                 similarity = self._maxsim(query_matrix, self._matrix(late))
                 value += min(similarity, 1.0) * self.settings.rerank_late_interaction_weight
             return value
 
-        return sorted(hits, key=score, reverse=True)
+        for hit in hits:
+            hit.score = score(hit)
+        self._apply_cross_encoder(query, hits)
+        return sorted(hits, key=lambda hit: hit.score, reverse=True)
+
+    def _apply_cross_encoder(self, query: str, hits: list[SearchHit]) -> None:
+        if not query or self.cross_encoder is None or not self.cross_encoder.enabled:
+            return
+        candidates = hits[: self.settings.rerank_cross_encoder_candidates]
+        scores = self.cross_encoder.score(query, [hit.text for hit in candidates])
+        if len(scores) != len(candidates):
+            return
+        lo, hi = min(scores), max(scores)
+        span = hi - lo or 1.0
+        weight = self.settings.rerank_cross_encoder_weight
+        for hit, raw in zip(candidates, scores, strict=True):
+            hit.score += weight * (raw - lo) / span
+            hit.metadata["cross_encoder_score"] = raw
 
     def _matrix(self, vectors: list[list[float]]) -> np.ndarray | None:
         if not vectors:

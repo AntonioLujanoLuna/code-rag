@@ -102,6 +102,34 @@ class Settings(BaseSettings):
     # Expand short BM25 queries with CamelCase/snake_case splits and synonyms.
     query_expansion_enabled: bool = True
 
+    # Graph expansion: after fusion, traverse code edges (calls/imports/tests/...)
+    # from the top hits to pull in structurally related chunks the lexical/vector
+    # legs missed. ``seed_hits`` bounds how many top hits seed the traversal,
+    # ``max_neighbors`` caps neighbour chunks added, ``hops`` allows multi-hop.
+    graph_expansion_enabled: bool = True
+    graph_expansion_seed_hits: int = 5
+    graph_expansion_max_neighbors: int = 10
+    graph_expansion_hops: int = 1
+    rerank_graph_neighbor_boost: float = 0.05
+
+    # Community detection: cluster the symbol/edge graph per repo at index time
+    # and store a summary per community so global ("what subsystems exist?")
+    # questions can retrieve cluster summaries instead of only chunks.
+    community_detection_enabled: bool = True
+    community_min_size: int = 3
+    community_max_members: int = 200
+    community_summary_max_symbols: int = 25
+    community_search_size: int = 3
+    rerank_community_boost: float = 0.1
+
+    # Optional cross-encoder rerank service. When ``rerank_service_url`` is set,
+    # the top fused candidates are re-scored by posting ``{"query", "documents"}``
+    # and reading back a parallel ``scores`` list, blended with heuristic scores.
+    rerank_service_url: str = ""
+    rerank_service_timeout_seconds: float = 30.0
+    rerank_cross_encoder_weight: float = 1.0
+    rerank_cross_encoder_candidates: int = 30
+
     source_extensions: set[str] = Field(
         default_factory=lambda: {
             ".py",
