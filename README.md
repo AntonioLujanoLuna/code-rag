@@ -379,3 +379,9 @@ CI runs the evaluator against a seeded Elasticsearch service container.
 The first version stores only active snapshots. Historical snapshots can be
 added by changing replacement semantics from delete-and-insert to
 `active_snapshot=false` plus insert.
+
+Indices are addressed through aliases backed by versioned indices
+(`code_chunks_v1`, …). To roll a mapping change, bump `CODE_RAG_INDEX_VERSION`
+and run `code-rag reindex`, which builds the new backing index, copies
+documents, and atomically swaps the alias. See [docs/MIGRATIONS.md](docs/MIGRATIONS.md)
+for the full runbook.

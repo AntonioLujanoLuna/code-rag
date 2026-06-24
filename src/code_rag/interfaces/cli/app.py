@@ -38,6 +38,22 @@ def init_indices() -> None:
     typer.echo("Elasticsearch indices are ready.")
 
 
+@app.command("reindex")
+def reindex(
+    only: str | None = typer.Option(
+        None, help="Restrict to a single alias, e.g. the configured code_chunks index."
+    ),
+) -> None:
+    """Migrate managed indices to the current CODE_RAG_INDEX_VERSION.
+
+    Creates the current-version backing index from its mapping, copies documents
+    from the alias's existing backing, and atomically swaps the alias. Safe to
+    re-run. Bump CODE_RAG_INDEX_VERSION before running to roll a mapping change.
+    """
+    results = get_index().reindex(only=only)
+    typer.echo(json.dumps({"reindexed": results}, indent=2))
+
+
 @app.command("index-project")
 def index_project(
     project_id: str = typer.Option(..., help="GitLab project id."),
